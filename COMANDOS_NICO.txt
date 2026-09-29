@@ -1,0 +1,119 @@
+GUIA DE COMANDOS DO PROJETO NICO
+================================
+
+Use estes comandos no PowerShell. O terminal atual normalmente já abre na pasta do projeto. Se não estiver nela, primeiro execute:
+
+Set-Location "C:\Users\usuario\OneDrive\Área de Trabalho\Nico"
+
+Isso muda a pasta atual para o projeto. No PowerShell, use Set-Location; o formato `cd /d` é do Prompt de Comando (cmd), não do PowerShell.
+
+PYTHON / NICO
+-------------
+
+py -3.11 --version
+Mostra a versão do Python 3.11 que será usada.
+
+py -3.11 -m py_compile nico.py
+Verifica erros de sintaxe em nico.py. Não inicia o Nico e não testa microfone, Ollama ou o banco.
+
+py -3.11 nico.py
+Inicia o Nico: abre a janela, começa a escutar pelo microfone e usa o Ollama quando necessário. Para encerrar, feche a janela do Nico.
+
+OLLAMA
+------
+
+ollama --version
+Mostra a versão instalada do Ollama.
+
+ollama ps
+Mostra os modelos que estão carregados no momento.
+
+ollama run qwen2.5:1.5b
+Inicia o modelo e abre uma conversa interativa no terminal.
+
+ollama run qwen2.5:1.5b "What is Python?"
+Faz uma pergunta de teste ao modelo no terminal.
+
+ollama stop qwen2.5:1.5b
+Descarrega/para esse modelo. Isso não fecha o servidor Ollama; o Nico ainda pode iniciar o modelo novamente.
+
+Para fechar completamente o servidor Ollama no Windows:
+
+1. Procure o ícone do Ollama na área de notificação, perto do relógio. Se estiver oculto, clique na seta ^ para mostrar os ícones ocultos.
+2. Clique com o botão direito no ícone do Ollama e escolha Quit ou Exit para encerrar o aplicativo e o servidor em segundo plano.
+
+Para impedir que o Ollama inicie automaticamente quando você entrar no Windows:
+
+1. Abra Configurações do Windows > Aplicativos > Inicialização.
+2. Desative Ollama.
+
+Isso só impede a inicialização automática futura; para encerrar o Ollama que já está rodando, use Quit/Exit na área de notificação.
+
+Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue
+Verifica se algum processo ainda está escutando na porta do servidor Ollama. Se não mostrar uma conexão, o servidor não está escutando nessa porta.
+
+ollama serve
+Inicia manualmente o servidor Ollama. Só use se ele não estiver rodando. Se aparecer erro dizendo que a porta 11434 já está ocupada, o servidor provavelmente já está ativo; não inicie uma segunda cópia.
+
+BANCO SQLITE
+------------
+
+O banco local do Nico chama-se nico_memory.db e é criado pelo próprio programa. O arquivo está listado no .gitignore para não ser enviado ao Git.
+
+Para visualizar o banco, abra o DB Browser for SQLite pelo menu Iniciar, selecione nico_memory.db e use a aba Browse Data para escolher a tabela conversation. É melhor fechar o Nico antes de abrir ou editar o banco no DB Browser, para evitar bloqueio do arquivo.
+
+CODEBASE MEMORY MCP
+-------------------
+
+$cbm = Join-Path $env:LOCALAPPDATA 'Programs\codebase-memory-mcp\codebase-memory-mcp.exe'
+Cria uma variável temporária do PowerShell apontando para o executável do MCP. Execute esta linha antes dos comandos do MCP abaixo, caso abra um terminal novo.
+
+& "$env:LOCALAPPDATA\Programs\codebase-memory-mcp\codebase-memory-mcp.exe" cli list_projects --format json
+Lista os projetos indexados pelo MCP.
+
+& "$env:LOCALAPPDATA\Programs\codebase-memory-mcp\codebase-memory-mcp.exe" cli --progress index_repository --repo-path "C:\Users\usuario\OneDrive\Área de Trabalho\Nico"
+Indexa ou atualiza o grafo de código deste projeto. Não inclui o banco nico_memory.db.
+
+& "$env:LOCALAPPDATA\Programs\codebase-memory-mcp\codebase-memory-mcp.exe" --ui=true --port=9749
+Inicia a interface visual do grafo de código. Mantenha o terminal/processo aberto enquanto usa a interface. Depois abra este endereço no navegador:
+
+http://localhost:9749
+
+Se a porta 9749 já estiver em uso, a interface pode já estar rodando; tente abrir o endereço antes de iniciar outra cópia.
+
+COMO DESLIGAR O CODEBASE MEMORY
+------------------------------
+
+Desligar somente a interface visual e manter o MCP disponível no VS Code:
+
+1. Abra o arquivo de configuração do usuário do VS Code:
+	%APPDATA%\Code\User\mcp.json
+2. Na entrada codebase-memory-mcp, altere a lista "args" para conter "--ui=false".
+	A entrada continuará usando o MCP, mas sem iniciar o grafo visual.
+3. No VS Code, execute "Developer: Reload Window" pela Command Palette.
+
+O executável aceita a opção --ui=false e persiste a configuração da interface. Para ligar o grafo novamente, remova essa opção e recarregue a janela do VS Code.
+
+Desativar completamente o servidor MCP no VS Code, sem desinstalar:
+
+1. Abra %APPDATA%\Code\User\mcp.json.
+2. Remova apenas a entrada "codebase-memory-mcp" dentro de "servers". Preserve quaisquer outras entradas MCP.
+3. Recarregue a janela do VS Code.
+
+Isso impede o VS Code de iniciar esse servidor, mas mantém o executável instalado e o índice local no computador. Para ativá-lo novamente, restaure a entrada ou execute novamente o instalador oficial.
+
+Se a interface já estiver aberta e você só fechar a aba do navegador, isso não necessariamente desliga o serviço; a aba apenas deixa de mostrar o grafo.
+
+GIT
+---
+
+git status --short --branch
+Mostra a branch atual e quais arquivos têm alterações. Não altera nem envia arquivos.
+
+LEMBRETES
+---------
+
+- Os comandos acima são para PowerShell.
+- O Nico usa Python 3.11; prefira sempre `py -3.11` para executá-lo ou compilá-lo.
+- `py_compile` verifica sintaxe, mas não substitui os testes reais de voz, banco e Ollama.
+- Nunca coloque credenciais, chaves ou conversas privadas no Git. O .gitignore já contém nico_memory.db e .env.

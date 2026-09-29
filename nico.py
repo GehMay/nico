@@ -1,10 +1,12 @@
 import pyttsx3
-import speech_recognition as sr
+import datetime
+import sqlite3
+import string
 import gc
 import threading
+import speech_recognition as sr
 import customtkinter as ctk
 import requests
-import datetime
 
 def speak(text):
     set_status("Speaking")
@@ -56,6 +58,44 @@ def build_context_prompt(command_text):
     )
     return f"{context}\nUser: {command_text}\nAssistant:"
 
+def open_database():
+    return sqlite3.connect("nico_memory.db")
+
+def create_table():
+    connection = open_database()
+    connection.execute("""CREATE TABLE IF NOT EXISTS conversation(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_text TEXT,
+    assistant_text TEXT
+    )""")
+    connection.commit()
+    connection.close()
+
+def save_conversation(user_text, assistant_text):
+    connection = open_database()
+    connection.execute(
+        "INSERT INTO conversation (user_text, assistant_text) VALUES (?, ?)",
+        (user_text, assistant_text)
+    )
+    connection.commit()
+    connection.close()
+
+def find_conversation(user_text):
+    connection = open_database()
+    cursor = connection.execute(
+        """SELECT assistant_text
+        FROM conversation
+        WHERE user_text LIKE ?""",
+        (user_text,)
+    )
+    result = cursor.fetchone()
+    if result is not None:
+        answer = result[0]
+    else:
+        answer = None
+    connection.close()
+    return answer
+
 def ask_ollama(prompt):
     response = requests.post(
         "http://localhost:11434/api/generate",
@@ -93,7 +133,11 @@ def get_current_time():
     return current_time.strftime("%I:%M %p")
 
 def normalize_text(text):
-    return " ".join(text.lower().split())
+    clean_text = text.lower()
+    clean_text = clean_text.translate(
+        str.maketrans("", "", string.punctuation)
+    )
+    return " ".join(clean_text.split())
 
 def classify_command(command_text):
     normalized = normalize_text(command_text)
@@ -123,8 +167,14 @@ def handle_command(command_text):
     command_type = classify_command(command_text)
 
     if command_type == "LLM":
+        saved_answer = find_conversation(command_text)
+        if saved_answer is not None:
+            print("Cache Hit - Resposta do BdD")
+            return saved_answer
+        print("Cache Miss - Resposta do Ollama")
         answer = ask_ollama(build_context_prompt(command_text))
         conversation_history.append((command_text, answer))
+        save_conversation(command_text, answer)
         return answer
 
     if command_type == "TIME":
@@ -151,6 +201,7 @@ def handle_command(command_text):
     return answer
 
 def voice_cycle():
+    set_status("Listening")
     with sr.Microphone() as source:
         recognizer.adjust_for_ambient_noise(source, duration=0.5)
         audio = recognizer.listen(source, timeout=10, phrase_time_limit=5)
@@ -158,7 +209,7 @@ def voice_cycle():
     try:
         set_status("Thinking")
         text = recognizer.recognize_google(audio, language="en-US")
-    except sr.UnknownValueError:
+    except sr.UnknownValueError:   
         print("I didn't understand what you said. Try again.")
         return
 
@@ -211,6 +262,8 @@ status_label = ctk.CTkLabel(app, text= "Nico is Starting...")
 status_label.pack(pady=40)
 def set_status(message):
     app.after(0, lambda: status_label.configure(text=message))
+
+create_table()
 
 voice_thread = threading.Thread(target=voice_loop, daemon=True)
 voice_thread.start()
