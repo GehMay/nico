@@ -82,17 +82,9 @@ def save_conversation(user_text, assistant_text):
 
 def find_conversation(user_text):
     connection = open_database()
-    cursor = connection.execute(
-        """SELECT assistant_text
-        FROM conversation
-        WHERE user_text LIKE ?""",
-        (user_text,)
-    )
-    result = cursor.fetchone()
-    if result is not None:
-        answer = result[0]
-    else:
-        answer = None
+    cursor = connection.execute("""SELECT user_text, assistant_text FROM conversation""")
+    answer = cursor.fetchall()
+    user_text_salvo = normalize_text()
     connection.close()
     return answer
 
