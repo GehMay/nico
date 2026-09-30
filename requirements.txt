@@ -1,0 +1,11 @@
+pyttsx3
+SpeechRecognition
+requests
+PyAudio
+edge-tts
+pygame
+flask
+pywebview
+python-dotenv
+python-docx
+dateparser

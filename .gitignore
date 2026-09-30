@@ -1,2 +1,4 @@
 nico_memory.db
 .env
+tts_cache/
+__pycache__/

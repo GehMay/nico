@@ -1,0 +1,629 @@
+===================================================================
+DOCUMENTAÇÃO DO PROJETO NICO
+Assistente de voz local em inglês para Windows
+Atualizado em: 2026-09-30 (rodada 3: interface HUD via pywebview, grafo de
+memória estilo galáxia, reforço de IA na nuvem)
+===================================================================
+
+------------------------------------------------------------------
+1. VISÃO GERAL
+------------------------------------------------------------------
+Nico é um assistente de voz local que:
+- Escuta o microfone, espera uma "wake word" (palavra de ativação, ex.: "nico").
+- Reconhece a fala via Google Speech Recognition (idioma en-US).
+- Classifica o comando (hora, saudação, humor, agradecimento, capacidades,
+  identidade ou conversa livre via LLM).
+- Para conversa livre, consulta primeiro um cache local em SQLite usando
+  busca por PALAVRAS-CHAVE (não mais só igualdade exata); se não encontrar
+  com confiança suficiente, pergunta ao modelo local Ollama (qwen2.5:1.5b)
+  e salva a resposta no banco.
+- Se o comando estiver claramente incompleto, pede para o usuário
+  completar o pensamento em vez de mandar para o LLM.
+- Se houver mais de uma memória parecida (ambíguo), pergunta ao usuário
+  para esclarecer antes de responder.
+- Fala a resposta em voz alta (pyttsx3) e mostra status em uma janela
+  gráfica (CustomTkinter).
+
+Status do projeto (conforme AGENTS.md): FINALIZADO. Todas as fases foram
+concluídas (Fases 1-4 em commits anteriores; Fase 5 - memória persistente -
+concluída nesta rodada, com as três melhorias planejadas: busca
+normalizada por palavras-chave, tratamento de comando incompleto e
+desambiguação). Além disso, foi feita uma rodada de endurecimento contra
+falhas (ver seção 17). O projeto não tem mais fases planejadas; novos
+pedidos futuros são tratados como itens novos, não continuação de fase.
+
+------------------------------------------------------------------
+2. ESTRUTURA DE ARQUIVOS
+------------------------------------------------------------------
+O projeto era um único arquivo (nico.py) e agora está dividido em módulos,
+todos na mesma pasta (sem necessidade de empacotamento):
+
+  config.py       -> todas as constantes/configurações do projeto.
+  text_utils.py   -> normalização de texto e detecção de comando incompleto.
+  database.py     -> acesso ao SQLite (abrir, criar tabela, salvar, ler tudo).
+  memory.py       -> busca de memória por palavras-chave (cache de respostas).
+  llm.py          -> integração com o Ollama e hora atual.
+  commands.py     -> classificação e roteamento de comandos.
+  gui.py          -> criação da janela CustomTkinter.
+  voice.py        -> captura de voz, fala (TTS) e o loop de escuta.
+  nico.py         -> ponto de entrada: liga tudo e inicia o programa.
+
+Para rodar o projeto, o comando continua o mesmo:
+  py -3.11 nico.py
+
+------------------------------------------------------------------
+3. STACK / DEPENDÊNCIAS
+------------------------------------------------------------------
+- pyttsx3            -> texto em voz (TTS) usando o motor de voz do Windows.
+- datetime           -> obter hora atual.
+- sqlite3            -> banco de dados local (nico_memory.db).
+- string             -> usado para remover pontuação (string.punctuation).
+- gc                 -> coleta de lixo manual após liberar o motor de voz.
+- threading          -> roda o loop de voz em uma thread separada (daemon).
+- speech_recognition (sr) -> captura e reconhece áudio do microfone.
+- customtkinter (ctk)-> interface gráfica (janela de status).
+- requests           -> chamada HTTP para a API local do Ollama.
+- dataclasses / typing (biblioteca padrão) -> usados em memory.py e
+  commands.py para estruturar os resultados (MemoryResult, CommandResult)
+  em vez de tuplas soltas.
+
+------------------------------------------------------------------
+4. config.py - CONSTANTES
+------------------------------------------------------------------
+WAKE_WORDS (list[str])
+  - Palavras que ativam o assistente: "nico", "nicolò", "nicolo", "nick",
+    "nic".
+
+WAKE_WORD_ALIASES (dict[str, str])
+  - Mapeia variações mal reconhecidas pelo Google de volta para "nico"
+    (ex.: "niko", "nikko", "nicco", "nicko", "nicola", "nicol").
+
+DB_PATH (str)
+  - Caminho do arquivo SQLite: "nico_memory.db".
+
+OLLAMA_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT, OLLAMA_TEMPERATURE
+  - Endpoint local, modelo "qwen2.5:1.5b", timeout 180s, temperatura 0.3.
+
+VOICE_INDEX (int)
+  - Índice da voz do Windows usada pelo pyttsx3 (1 = segunda voz instalada).
+
+CONTEXT_HISTORY_LIMIT (int)
+  - Quantas trocas recentes de conversation_history entram no prompt de
+    contexto enviado ao Ollama (5).
+
+MATCH_THRESHOLD (float, 0.6)
+  - Pontuação mínima de similaridade (Jaccard) para considerar uma memória
+    salva como resposta válida.
+
+AMBIGUITY_MARGIN (float, 0.15)
+  - Diferença mínima entre a melhor e a segunda melhor pontuação para
+    considerar a resposta "clara" em vez de ambígua.
+
+MAX_CLARIFICATION_CANDIDATES (int, 2)
+  - Quantas memórias candidatas são oferecidas ao usuário quando há
+    ambiguidade.
+
+MIN_COMMAND_WORDS (int, 2)
+  - Número mínimo de palavras para um comando não ser considerado
+    incompleto.
+
+INCOMPLETE_TRAILING_WORDS (set[str])
+  - Palavras que, se estiverem no final da frase, indicam que o usuário
+    provavelmente não terminou de falar (ex.: "and", "but", "so", "if").
+
+------------------------------------------------------------------
+5. text_utils.py - NORMALIZAÇÃO DE TEXTO
+------------------------------------------------------------------
+normalize_text(text)
+  Retorno: str - minúsculas, sem pontuação, espaços colapsados.
+
+tokenize(text)
+  Retorno: list[str] - normalize_text(text) já dividido em palavras.
+
+is_incomplete_command(text, min_words, trailing_words)
+  Parâmetros: text (str), min_words (int), trailing_words (set[str]).
+  Retorno: bool.
+  O que faz: True se o comando tiver menos que min_words palavras, ou se
+  a última palavra estiver em trailing_words (indício de frase cortada).
+
+------------------------------------------------------------------
+6. database.py - ACESSO AO SQLITE
+------------------------------------------------------------------
+Tabela: conversation
+  id              INTEGER PRIMARY KEY AUTOINCREMENT
+  user_text       TEXT
+  assistant_text  TEXT
+
+open_database() -> sqlite3.Connection
+  Abre (ou cria) o arquivo definido em config.DB_PATH.
+
+create_table()
+  CREATE TABLE IF NOT EXISTS - seguro para chamar toda vez que o programa
+  inicia, não apaga dados existentes.
+
+save_conversation(user_text, assistant_text)
+  Insere uma linha usando placeholders "?" (proteção contra SQL
+  injection). Faz commit e fecha a conexão.
+
+fetch_all_conversations() -> list[tuple[str, str]]
+  Lê todas as linhas (user_text, assistant_text) da tabela. Usada pelo
+  memory.py para pontuar candidatos.
+
+------------------------------------------------------------------
+7. memory.py - BUSCA DE MEMÓRIA POR PALAVRAS-CHAVE
+------------------------------------------------------------------
+MemoryResult (dataclass)
+  status: "hit" | "ambiguous" | "miss"
+  answer: str | None
+  candidates: list[tuple[str, str]] (preenchido só quando "ambiguous")
+
+_keyword_score(query_tokens, candidate_tokens) -> float
+  Similaridade de Jaccard: tamanho da interseção dividido pelo tamanho da
+  união dos conjuntos de tokens. 1.0 = mesmas palavras; 0.0 = nada em
+  comum.
+
+find_conversation(user_text) -> MemoryResult
+  1. Tokeniza a pergunta atual.
+  2. Para cada pergunta salva no banco, calcula a pontuação de
+     similaridade com _keyword_score.
+  3. Ordena do maior para o menor score.
+  4. Se a melhor pontuação for menor que MATCH_THRESHOLD -> "miss".
+  5. Se a segunda melhor pontuação estiver muito perto da primeira
+     (dentro de AMBIGUITY_MARGIN) -> "ambiguous", com até
+     MAX_CLARIFICATION_CANDIDATES candidatos.
+  6. Caso contrário -> "hit", retorna a resposta salva da melhor
+     pontuação.
+  Isso substitui a versão antiga, que só aceitava igualdade exata do
+  texto normalizado.
+
+------------------------------------------------------------------
+8. llm.py - INTEGRAÇÃO COM O OLLAMA
+------------------------------------------------------------------
+build_context_prompt(command_text, conversation_history)
+  Monta um prompt com as últimas CONTEXT_HISTORY_LIMIT trocas da sessão
+  atual (conversation_history) mais o comando atual, para dar contexto ao
+  modelo.
+
+ask_ollama(prompt) -> str
+  POST para OLLAMA_URL com o modelo, o prompt de persona + poucos
+  exemplos + pergunta, stream=False, temperature=OLLAMA_TEMPERATURE,
+  timeout=OLLAMA_TIMEOUT. response.raise_for_status() garante que falhas
+  HTTP virem exceção (tratada em voice.py).
+
+get_current_time() -> str
+  Hora atual formatada "HH:MM AM/PM".
+
+------------------------------------------------------------------
+9. commands.py - CLASSIFICAÇÃO E ROTEAMENTO
+------------------------------------------------------------------
+CommandResult (dataclass)
+  kind: "ANSWER" | "CLARIFY" | "INCOMPLETE"
+  text: str (resposta, ou pergunta de esclarecimento, ou pedido de
+  completar a frase)
+  candidates: list[tuple[str, str]] (só usado em "CLARIFY")
+
+classify_command(command_text) -> str
+  Mesma lógica de antes, por palavras/substrings:
+    "TIME"         -> contém "time", "hour" ou "clock"
+    "GREETING"     -> contém "hello", "hi" ou "hey"
+    "MOOD"         -> contém "how are you" / "how are you doing"
+    "THANKS"       -> contém "thank you"
+    "CAPABILITIES" -> contém "what can you do" / "what are you able to do"
+    "IDENTITY"     -> contém "who are you" / "what are you"
+    "LLM"          -> qualquer outro caso
+
+handle_command(command_text, conversation_history) -> CommandResult
+  1. Classifica o comando.
+  2. Para os tipos fixos (TIME, GREETING, MOOD, THANKS, CAPABILITIES,
+     IDENTITY), retorna CommandResult("ANSWER", <resposta fixa>).
+  3. Para "LLM":
+     a. Se is_incomplete_command(...) for True -> CommandResult
+        ("INCOMPLETE", "Could you finish that thought?").
+     b. Caso contrário, chama memory.find_conversation:
+        - status "hit"  -> CommandResult("ANSWER", resposta salva)
+          (imprime "Cache Hit - Resposta do BdD").
+        - status "ambiguous" -> CommandResult("CLARIFY", pergunta de
+          esclarecimento, candidates=[...]) (imprime "Cache Ambiguous -
+          pedindo esclarecimento").
+        - status "miss" -> chama ask_ollama com contexto, salva a nova
+          conversa (save_conversation) e adiciona ao conversation_history,
+          retorna CommandResult("ANSWER", resposta) (imprime "Cache Miss
+          - Resposta do Ollama").
+
+resolve_clarification(reply_text, candidates, command_text, conversation_history) -> str
+  Chamada depois que o usuário responde à pergunta de esclarecimento.
+    1. Se a resposta contiver "first"/"one"/"1" -> usa o 1º candidato.
+    2. Se contiver "second"/"two"/"2" -> usa o 2º candidato.
+    3. Senão, calcula a sobreposição de palavras entre a resposta e cada
+       pergunta candidata salva, escolhe a de maior sobreposição.
+    4. Se nada bater, faz uma chamada nova ao Ollama (fallback seguro),
+       salva e retorna a resposta.
+
+------------------------------------------------------------------
+10. gui.py - INTERFACE GRÁFICA
+------------------------------------------------------------------
+create_gui() -> (app, set_status)
+  Cria a janela CustomTkinter ("Nico", 420x240), um rótulo de status
+  inicial "Nico is Starting...", e devolve:
+    - app: a janela (para app.mainloop() no final).
+    - set_status(message): função que atualiza o texto do rótulo de forma
+      thread-safe, usando app.after(0, ...) (necessário porque o loop de
+      voz roda em outra thread e o Tkinter não é thread-safe).
+
+------------------------------------------------------------------
+11. voice.py - CAPTURA DE VOZ, FALA E LOOP PRINCIPAL
+------------------------------------------------------------------
+recognizer (sr.Recognizer)
+  Instância única, reaproveitada em todas as capturas.
+
+speak(text, set_status)
+  Muda status para "Speaking", cria um motor pyttsx3 novo, seleciona a
+  voz VOICE_INDEX, fala o texto, encerra o motor e força coleta de lixo
+  (gc.collect()) para evitar vazamento de memória/handles de áudio.
+
+is_wake_word(text) -> bool
+  Normaliza o texto e verifica se algum token é uma wake word (direto ou
+  via alias).
+
+_listen_once(set_status, timeout, phrase_time_limit=None) -> str
+  Função auxiliar interna: abre o microfone, ajusta ruído ambiente, ouve
+  por até "timeout" segundos (limitando a frase a "phrase_time_limit", se
+  informado), muda status para "Thinking" e reconhece via Google.
+  Usada tanto para ouvir a wake word quanto os comandos e as respostas de
+  esclarecimento — evita repetir o mesmo bloco de código três vezes
+  (como acontecia no arquivo original).
+
+voice_cycle(conversation_history, set_status)
+  1. Tenta ouvir a wake word (até 10s, frase de até 5s).
+     - Se não entender a fala -> imprime aviso e encerra o ciclo.
+     - Se der timeout (silêncio) -> encerra o ciclo silenciosamente (esse
+       caso NÃO era tratado no arquivo original, o que derrubava a thread
+       de voz após 10s de silêncio; foi corrigido aqui).
+  2. Se a frase não contiver wake word -> fala "I don't know that command
+     yet." e encerra o ciclo.
+  3. Se contiver -> fala "Yes? I'm listening." e entra em loop de
+     comandos:
+     a. Ouve um comando (até 10s). Timeout -> sai do loop (volta a
+        esperar a wake word). Não entendeu -> avisa e continua ouvindo.
+     b. Ignora comando vazio.
+     c. Chama handle_command(command_text, conversation_history):
+        - kind "CLARIFY": fala a pergunta de esclarecimento, ouve uma
+          resposta curta (até 8s, tolerando timeout/não-entendimento),
+          resolve com resolve_clarification e fala a resposta final.
+        - kind "INCOMPLETE": fala o pedido para completar o pensamento
+          (não força o usuário a repetir tudo automaticamente — ele fala
+          de novo do zero na próxima vez).
+        - kind "ANSWER": fala a resposta diretamente.
+     d. Erros de rede com o Ollama (requests.RequestException) são
+        capturados e avisados por voz.
+     e. Erros do serviço de reconhecimento de fala do Google
+        (sr.RequestException - ex.: sem internet) também são capturados,
+        tanto ao ouvir a wake word quanto ao ouvir um comando; o ciclo é
+        avisado por voz e encerrado com segurança em vez de travar.
+
+voice_loop(conversation_history, set_status)
+  Roda voice_cycle em loop infinito. É o alvo da thread daemon iniciada
+  em nico.py. Cada chamada a voice_cycle é protegida por um try/except
+  Exception: se algo inesperado acontecer (ex.: microfone desconectado,
+  erro de driver de áudio), o erro é impresso, o status muda para
+  "Error - retrying", o loop espera 2 segundos (time.sleep) e tenta de
+  novo — em vez de a thread de voz morrer silenciosamente e o assistente
+  parar de responder para sempre.
+
+------------------------------------------------------------------
+12. nico.py - PONTO DE ENTRADA
+------------------------------------------------------------------
+main()
+  1. Cria a GUI (create_gui) -> obtém app e set_status.
+  2. Garante que a tabela do banco existe (create_table).
+  3. Cria conversation_history = [] (vive só durante essa execução, em
+     RAM; diferente da tabela "conversation" no SQLite, que é permanente).
+  4. Inicia voice_thread (daemon=True) rodando voice_loop, passando
+     conversation_history e set_status por parâmetro (em vez de depender
+     de variáveis globais compartilhadas entre módulos).
+  5. Chama app.mainloop() — bloqueia a thread principal cuidando da GUI
+     até a janela ser fechada.
+
+if __name__ == "__main__": main() garante que rodar "py -3.11 nico.py"
+funciona como antes.
+
+------------------------------------------------------------------
+13. BANCO DE DADOS (nico_memory.db)
+------------------------------------------------------------------
+Tabela: conversation (id, user_text, assistant_text) — sem mudanças de
+esquema nesta rodada.
+
+Regras de segurança mantidas:
+  - Todas as inserções usam placeholders "?" (save_conversation), nunca
+    concatenação de string — evita SQL injection.
+  - Não há SQL dinâmico gerado a partir de voz ou do Ollama.
+  - nico_memory.db está no .gitignore (não deve ir para o Git).
+
+------------------------------------------------------------------
+14. COMANDOS DE VALIDAÇÃO
+------------------------------------------------------------------
+  py -3.11 -m py_compile config.py text_utils.py database.py memory.py llm.py commands.py gui.py voice.py nico.py
+  py -3.11 nico.py
+
+  (requirements.txt lista as dependências: pyttsx3, SpeechRecognition,
+  customtkinter, requests, PyAudio — instale com
+  "py -3.11 -m pip install -r requirements.txt")
+
+Além da compilação, a lógica de memória, comando incompleto e roteamento
+de comandos foi validada com um script de teste isolado (sem GUI/microfone),
+usando um banco SQLite temporário, cobrindo os casos: hit, ambíguo, miss,
+comando incompleto e comando local (ex.: saudação). A parte de voz/GUI em
+si não pôde ser testada automaticamente (requer microfone e display).
+
+------------------------------------------------------------------
+15. O QUE MUDOU NA RODADA DE DIVISÃO EM MÓDULOS (Fase 5 concluída)
+------------------------------------------------------------------
+- Projeto dividido em 9 módulos (antes era um único arquivo nico.py).
+- find_conversation agora usa similaridade de palavras-chave (Jaccard),
+  não mais igualdade exata.
+- Comandos muito curtos ou terminados em conjunção (ex.: "and") são
+  tratados como incompletos, pedindo ao usuário para completar.
+- Quando duas ou mais memórias salvas têm pontuação parecida, o
+  assistente pergunta ao usuário para esclarecer antes de responder
+  (resolve_clarification), em vez de escolher às cegas.
+- conversation_history deixou de ser uma variável global implícita
+  compartilhada entre módulos e passou a ser criada em nico.py e passada
+  explicitamente pelas funções que precisam dela.
+- Corrigido um bug de robustez: no arquivo original, silêncio por 10s
+  durante a escuta da wake word gerava uma exceção sr.WaitTimeoutError
+  não tratada, o que derrubava a thread de voz inteira (o programa
+  continuava de pé, mas parava de ouvir para sempre). Agora esse caso é
+  tratado e o ciclo simplesmente recomeça.
+
+------------------------------------------------------------------
+16. O QUE MUDOU NA RODADA DE FINALIZAÇÃO DO PROJETO
+------------------------------------------------------------------
+O usuário decidiu encerrar o uso deste projeto como ferramenta de estudo
+de Python (vai estudar com projetos básicos separados) e pediu para
+finalizar o Nico diretamente. Mudanças desta rodada:
+- voice.py agora captura sr.RequestException (falha do serviço de
+  reconhecimento do Google, ex.: sem internet) tanto ao ouvir a wake word
+  quanto ao ouvir um comando, avisando por voz em vez de travar a thread.
+- voice_loop() passou a envolver cada voice_cycle() em try/except Exception
+  amplo: qualquer erro inesperado não derruba mais a thread de voz para
+  sempre — ela loga o erro, atualiza o status e tenta de novo após 2s.
+- Criado requirements.txt com as dependências do projeto.
+- AGENTS.md atualizado: todas as fases marcadas como concluídas, e a
+  seção de regras de ensino incremental foi encerrada (ver "Working Mode"
+  no AGENTS.md) — a partir de agora mudanças são feitas diretamente, sem
+  o fluxo de "ensinar um comando por vez".
+
+------------------------------------------------------------------
+17. LIMITAÇÕES CONHECIDAS (aceitas como está, projeto finalizado)
+------------------------------------------------------------------
+- A desambiguação por voz é simples (responde "first"/"one"/"second"/
+  "two", ou sobreposição de palavras); não é um diálogo sofisticado.
+- Comando incompleto não é "completado" automaticamente juntando as duas
+  falas — o usuário precisa falar a frase inteira de novo.
+- conversation_history continua apenas em RAM (não persiste entre
+  execuções do programa).
+- Falha ao iniciar o motor de voz (pyttsx3.init(), ex.: sem TTS instalado
+  no Windows) ou ao abrir o microfone pela primeira vez não tem tratamento
+  específico; cairia no except Exception genérico de voice_loop e tentaria
+  de novo a cada 2s, mas sem diagnóstico mais detalhado.
+- Não há testes automatizados de ponta a ponta (voz real + GUI real); a
+  validação foi por compilação + teste isolado de lógica (ver seção 14).
+- Nenhuma fase nova está planejada. O projeto é considerado pronto para
+  uso pessoal; qualquer pedido futuro é tratado como um item novo.
+
+------------------------------------------------------------------
+18. RODADA "VOZ, GUI, CELULAR E MEMÓRIA" (após o uso real do projeto)
+------------------------------------------------------------------
+O usuário testou o Nico funcionando e pediu 7 ajustes. O que foi feito:
+
+1. Voz masculina (RESOLVIDO)
+   - As únicas vozes instaladas no Windows (Maria/PT-BR, Zira/EN-US) são
+     femininas. Trocado o motor de voz para a voz neural do Microsoft
+     Edge (biblioteca edge-tts, voz "en-US-GuyNeural", masculina).
+
+2. Confundir "Nico" com "Nicole" (RESOLVIDO)
+   - Adicionados aliases em config.py: nicole, nichole, nikolai, neeko,
+     niku -> todos mapeiam para "nico" em WAKE_WORD_ALIASES.
+
+3. Voz robótica (RESOLVIDO)
+   - Mesma troca do item 1: a voz neural do Edge é muito mais natural do
+     que o SAPI5 (pyttsx3) usado antes.
+
+4. Interface interativa estilo "Jarvis" (IMPLEMENTADO - versão realista)
+   - Criado um orbe animado (tkinter.Canvas dentro da janela
+     CustomTkinter) que pulsa e muda de cor conforme o status:
+     cinza (parado), azul (Listening), roxo (Thinking), verde (Speaking),
+     vermelho (Error). Não é um holograma 3D como em vídeos de efeito
+     especial, mas é uma interface viva e reativa, factível num notebook
+     comum.
+
+5. Interface de memória (IMPLEMENTADO - lista pesquisável, não grafo)
+   - Nova página web em /memory (ver item 7) com busca em tempo real
+     sobre todas as memórias salvas no SQLite. Não é um grafo de nós e
+     arestas como o do database-memory-mcp (isso continua sendo uma
+     opção maior para o futuro, se ainda fizer sentido depois de usar
+     essa versão).
+
+6. Ligar para o celular da pessoa (NÃO IMPLEMENTADO - meta futura)
+   - Um script Python local não consegue fazer ligações telefônicas
+     sozinho. Isso exige um serviço de telefonia externo (ex.: Twilio,
+     geralmente pago) ou um aplicativo companion no celular. Fica
+     registrado como meta futura em AGENTS.md, dependendo da escolha de
+     um provedor pelo usuário.
+
+7. Conectar celular/tablet (IMPLEMENTADO - primeiro passo: painel web)
+   - Criado um servidor Flask local (web_server.py), escutando em
+     0.0.0.0:5000, acessível por qualquer aparelho na mesma rede Wi-Fi
+     pelo endereço impresso no console ao iniciar o programa
+     (http://<IP-do-PC>:5000).
+   - Página inicial ("/"): status em tempo real, histórico recente da
+     sessão, e uma caixa de texto para mandar comandos para o Nico sem
+     usar a voz (útil pelo celular).
+   - Página de memória ("/memory"): lista pesquisável de tudo que já foi
+     salvo no banco (não só da sessão atual).
+   - Limitação: é um painel web simples, não um aplicativo nativo. Não
+     manda notificações nem acessa contatos/chamadas do celular — isso
+     é o que ficou registrado como meta futura mais profunda.
+
+ARQUIVOS NOVOS DESTA RODADA:
+  tts.py         -> voz neural (edge-tts) com fallback para pyttsx3.
+  state.py       -> estado compartilhado (status + histórico) entre GUI,
+                    voz e servidor web.
+  web_server.py  -> servidor Flask (painel "/", memória "/memory",
+                    API "/status", "/history", "/api/memory", "/command").
+
+ARQUIVOS ALTERADOS:
+  config.py      -> novos aliases de wake word; NEURAL_VOICE, USE_NEURAL_VOICE.
+  gui.py         -> orbe animado em vez do rótulo de texto simples.
+  voice.py       -> agora importa speak() de tts.py (antes estava aqui
+                    dentro), sem outras mudanças de lógica de escuta.
+  nico.py        -> inicia também a thread do servidor web e imprime o
+                    endereço para acessar pelo celular/tablet.
+  requirements.txt -> adicionado edge-tts, pygame, flask.
+
+VALIDAÇÃO DESTA RODADA:
+  - py_compile em todos os módulos (incluindo os novos) - OK.
+  - Teste manual de geração de áudio com edge-tts - gerou um .mp3 válido.
+  - Teste do servidor Flask com o cliente de testes embutido (sem abrir
+    navegador de verdade): rotas "/", "/memory", "/status", "/history",
+    "/api/memory" e "/command" (incluindo caso de texto vazio -> 400)
+    responderam corretamente.
+  - Teste de criação da GUI (sem abrir mainloop): orbe e status_label
+    atualizam sem erro.
+  - Não foi possível testar em dispositivo físico (celular/tablet
+    acessando o painel pela rede) nem ouvir a voz de verdade — isso fica
+    por conta do usuário confirmar rodando "py -3.11 nico.py".
+
+OBSERVAÇÃO SOBRE FIREWALL: na primeira vez que o Flask subir, o Windows
+pode perguntar se permite o Python acessar a rede (pública/privada).
+É preciso permitir para "rede privada" para o celular conseguir acessar
+o painel.
+
+------------------------------------------------------------------
+19. RODADA 3 - HUD VIA PYWEBVIEW, GRAFO GALÁXIA, IA NA NUVEM
+------------------------------------------------------------------
+O usuário não gostou do orbe simples do Tkinter, pediu algo mais "tech",
+pediu de novo a memória em formato de grafo (como o do database-memory-mcp,
+"tipo uma mini galáxia"), e perguntou sobre usar APIs de IA gratuitas
+(Groq + Gemini) como reforço para perguntas difíceis, além de busca real
+na internet se não for cara.
+
+1. INTERFACE HUD (substituiu o Tkinter)
+   - gui.py foi REMOVIDO. A janela do programa agora é aberta com
+     pywebview (desktop_app.py), que renderiza uma página HTML/CSS/JS de
+     verdade (usa o WebView2, que já vem no Windows 11) em vez de
+     desenhar formas com tkinter.Canvas.
+   - A página (web/index.html + web/hud.js) tem: anéis girando em
+     velocidades diferentes, um núcleo que pulsa e brilha (glow via
+     box-shadow) mudando de cor por status (cinza/azul/roxo/verde/
+     vermelho), um "transcript" estilo terminal com as últimas trocas, e
+     uma caixa de texto para mandar comandos sem usar a voz.
+   - Essa mesma página também é servida pelo Flask, então o celular
+     acessa o visual idêntico ao da janela do PC.
+
+2. GRAFO DE MEMÓRIA ESTILO "GALÁXIA" (substituiu a lista simples)
+   - Nova página web/memory.html + web/galaxy.js, usando a biblioteca
+     vis-network (JavaScript, gratuita, carregada via CDN) com um layout
+     de física "forceAtlas2Based" (os nós se organizam sozinhos, como um
+     campo gravitacional).
+   - Cada pergunta salva vira um nó (um "ponto de luz"); duas perguntas
+     são ligadas por uma aresta se compartilharem palavras-chave acima de
+     um limiar (config.GRAPH_EDGE_THRESHOLD = 0.2), usando a mesma função
+     de similaridade (memory.keyword_score, antes chamada _keyword_score)
+     já usada para achar respostas em cache.
+   - Fundo escuro com pontinhos de "estrelas" via CSS, nós com glow
+     colorido, tamanho proporcional a quantas conexões o nó tem. Clicar
+     num nó mostra a pergunta/resposta completa; a busca filtra por texto
+     e apaga (opacidade baixa) os nós que não combinam.
+   - Novo endpoint /api/memory/graph em web_server.py monta os nós e
+     arestas a partir de fetch_all_conversations().
+
+3. REFORÇO DE IA NA NUVEM (Groq + Gemini) E BUSCA NA WEB (Tavily)
+   - Novo arquivo cloud_llm.py: ask_cloud_fallback(prompt) tenta o Groq
+     primeiro (modelo grande, ex. Llama 3.3 70B, free tier rápido e
+     generoso); se falhar (sem chave, erro de rede, cota estourada),
+     tenta o Gemini (Google AI Studio, free tier). Se os dois falharem,
+     levanta uma exceção para quem chamou decidir o que fazer.
+   - Novo arquivo web_search.py: search_web(query) busca na internet via
+     Tavily (free tier ~1000 buscas/mês) e build_search_prompt() monta um
+     prompt citando os resultados encontrados.
+   - commands.py ganhou uma função interna _get_llm_answer() que decide o
+     caminho:
+       a) Se a pergunta parece precisar de informação atual (contém
+          palavras como "today", "now", "latest", "weather", "price" -
+          config.REALTIME_KEYWORDS) e há uma chave do Tavily configurada:
+          busca na web e pede pro Groq/Gemini responder usando os
+          resultados.
+       b) Caso contrário, usa o Ollama local (como sempre foi).
+       c) Se o Ollama local falhar (ex.: não está rodando), tenta o
+          Groq/Gemini como reforço de confiabilidade, não só de
+          "inteligência".
+       d) Se absolutamente tudo falhar, devolve uma frase de desculpas em
+          vez de travar o assistente.
+   - Todas as chaves (GROQ_API_KEY, GEMINI_API_KEY, TAVILY_API_KEY) são
+     OPCIONAIS, lidas de um arquivo .env local (nunca vai pro Git) via a
+     biblioteca python-dotenv. Sem nenhuma chave configurada, o Nico
+     continua funcionando exatamente como antes (só local).
+   - Criado .env.example com instruções de onde conseguir cada chave de
+     graça: Groq em console.groq.com/keys, Gemini em
+     aistudio.google.com/apikey, Tavily em app.tavily.com.
+
+ARQUIVOS NOVOS DESTA RODADA:
+  cloud_llm.py    -> Groq + Gemini como reforço de IA.
+  web_search.py   -> busca na web via Tavily.
+  desktop_app.py  -> abre a janela nativa (pywebview) apontando pro Flask.
+  web/style.css   -> tema visual compartilhado (cores, fontes).
+  web/index.html + web/hud.js   -> interface HUD principal.
+  web/memory.html + web/galaxy.js -> grafo de memória estilo galáxia.
+  .env.example    -> modelo de onde colocar as chaves de API.
+
+ARQUIVOS REMOVIDOS:
+  gui.py -> não existe mais janela Tkinter; pywebview assumiu esse papel.
+
+ARQUIVOS ALTERADOS NESTA RODADA:
+  config.py      -> chaves de API (via .env), REALTIME_KEYWORDS,
+                    GRAPH_EDGE_THRESHOLD.
+  memory.py      -> _keyword_score virou keyword_score (pública), pois
+                    agora também é usada pelo grafo em web_server.py.
+  text_utils.py  -> nova função is_realtime_query().
+  commands.py    -> nova função _get_llm_answer() com a lógica de
+                    local/nuvem/busca descrita acima.
+  web_server.py  -> reescrito: serve os arquivos de web/, tem o novo
+                    endpoint /api/memory/graph.
+  nico.py        -> não abre mais GUI Tkinter; chama
+                    desktop_app.open_desktop_window() no lugar de
+                    app.mainloop().
+  requirements.txt -> adicionado pywebview, python-dotenv; removido
+                    customtkinter (não é mais usado).
+
+VALIDAÇÃO DESTA RODADA:
+  - py_compile em todos os módulos (incluindo os novos) - OK.
+  - Teste isolado da lógica de decisão local/busca+nuvem/nuvem-fallback em
+    commands._get_llm_answer, com funções fictícias (mocks) no lugar das
+    chamadas de API reais - os 4 caminhos (normal, tempo real, Ollama
+    fora do ar, tudo fora do ar) se comportaram como esperado.
+  - Teste das rotas novas com o cliente de testes do Flask: "/", "/memory",
+    "/assets/hud.js", "/assets/galaxy.js" e "/api/memory/graph" (conferido
+    que perguntas parecidas geram aresta e uma pergunta isolada não).
+  - RODADA REAL: o programa foi executado de verdade (py -3.11 nico.py)
+    por alguns segundos. Confirmado que: o servidor Flask sobe nas portas
+    certas, "/", "/memory" e "/api/memory/graph" respondem com dados reais
+    do nico_memory.db existente, e o status refletiu "Listening" (ou seja,
+    a thread de voz também iniciou e usou o microfone de verdade). O
+    processo foi encerrado logo em seguida (taskkill) para não ficar
+    escutando sem necessidade.
+  - NÃO testado: a aparência visual em si (glow, animações, grafo estilo
+    galáxia) precisa ser conferida a olho nu pelo usuário, abrindo o
+    programa — isso não dá pra validar por script.
+
+PRÓXIMOS PASSOS EM ABERTO (perguntar ao usuário antes de mexer):
+  - Ligar para o celular continua fora de escopo (precisa de serviço de
+    telefonia pago, tipo Twilio).
+  - Integração mais profunda com celular/tablet (notificações, contatos,
+    app nativo) continua como meta futura maior.
+  - O usuário ainda precisa criar as contas gratuitas (Groq, Gemini,
+    Tavily) e colocar as chaves no .env para o reforço de nuvem/busca
+    funcionar - sem isso, o Nico segue 100% local como antes.
+===================================================================
+FIM DO DOCUMENTO
+===================================================================
