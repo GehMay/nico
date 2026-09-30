@@ -84,9 +84,13 @@ def find_conversation(user_text):
     connection = open_database()
     cursor = connection.execute("""SELECT user_text, assistant_text FROM conversation""")
     answer = cursor.fetchall()
-    user_text_salvo = normalize_text()
     connection.close()
-    return answer
+    pergunta_normalizada = normalize_text(user_text)
+    for pergunta_salva, resposta_salva in answer:
+        pergunta_salva_normalizada = normalize_text(pergunta_salva)
+        if pergunta_salva_normalizada == pergunta_normalizada:
+            return resposta_salva
+    return None
 
 def ask_ollama(prompt):
     response = requests.post(
