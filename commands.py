@@ -5,14 +5,22 @@ import requests
 
 from cloud_llm import ask_cloud_fallback
 from config import (
+    BATTERY_TRIGGERS,
     INCOMPLETE_TRAILING_WORDS,
     MIN_COMMAND_WORDS,
     NOTIFY_TRIGGERS,
+    OPEN_PREFIX,
     REALTIME_KEYWORDS,
     REMEMBER_RECALL_PREFIXES,
     REMEMBER_TRIGGERS,
+    SCREENSHOT_TRIGGERS,
     TAVILY_API_KEY,
     TELEGRAM_USER,
+    VOLUME_DOWN_WORDS,
+    VOLUME_MUTE_TRIGGERS,
+    VOLUME_MUTE_WORDS,
+    VOLUME_UP_WORDS,
+    WEATHER_TRIGGERS,
 )
 from database import save_conversation, save_fact
 from documents import build_document_prompt, search_documents
@@ -21,7 +29,9 @@ from llm import ask_ollama, build_context_prompt, get_current_time
 from memory import find_conversation
 from notify import send_telegram_message
 from reminders import maybe_schedule_reminder
-from text_utils import is_incomplete_command, is_realtime_query, normalize_text
+from system_control import get_battery_status, open_target, take_screenshot, volume_down, volume_mute, volume_up
+from text_utils import is_incomplete_command, is_realtime_query, normalize_text, strip_request_wrapper
+from weather import get_weather_report
 from web_search import build_search_prompt, search_web
 
 
@@ -63,11 +73,55 @@ def classify_command(command_text):
     if any(trigger in normalized for trigger in NOTIFY_TRIGGERS):
         return "NOTIFY"
 
+    if normalized.startswith(OPEN_PREFIX):
+        return "OPEN"
+
+    if any(trigger in normalized for trigger in VOLUME_MUTE_TRIGGERS):
+        return "VOLUME_MUTE"
+
+    # "volume" + uma palavra de direção, em qualquer ordem na frase (ex.:
+    # "increase my volume", "turn my volume up", "volume up" - todas batem).
+    if "volume" in normalized:
+        words_set = set(words)
+        if words_set & VOLUME_MUTE_WORDS:
+            return "VOLUME_MUTE"
+        if words_set & VOLUME_UP_WORDS:
+            return "VOLUME_UP"
+        if words_set & VOLUME_DOWN_WORDS:
+            return "VOLUME_DOWN"
+
+    if "louder" in normalized:
+        return "VOLUME_UP"
+
+    if "quieter" in normalized:
+        return "VOLUME_DOWN"
+
+    if any(trigger in normalized for trigger in SCREENSHOT_TRIGGERS):
+        return "SCREENSHOT"
+
+    if any(trigger in normalized for trigger in BATTERY_TRIGGERS):
+        return "BATTERY"
+
+    if any(trigger in normalized for trigger in WEATHER_TRIGGERS):
+        return "WEATHER"
+
     return "LLM"
 
 
+def _affirm(message, was_question):
+    """Se o pedido veio em formato de pergunta ("can you open X?"), prefixa
+    a resposta com uma confirmação natural ("Sure, opening X."). Se veio
+    como ordem direta ("open X"), devolve a mensagem como está, sem
+    enrolação.
+    """
+    if not was_question or not message:
+        return message
+    return "Sure, " + message[0].lower() + message[1:]
+
+
 def handle_command(command_text, conversation_history):
-    command_type = classify_command(command_text)
+    core_text, was_question = strip_request_wrapper(command_text)
+    command_type = classify_command(core_text)
 
     if command_type == "TIME":
         return CommandResult("ANSWER", f"The time is {get_current_time()}.")
@@ -91,8 +145,8 @@ def handle_command(command_text, conversation_history):
         return CommandResult("ANSWER", "I'm Nico, your local voice assistant.")
 
     if command_type == "REMEMBER":
-        save_fact(command_text)
-        reminder_time = maybe_schedule_reminder(command_text)
+        save_fact(core_text)
+        reminder_time = maybe_schedule_reminder(core_text)
         if reminder_time:
             return CommandResult(
                 "ANSWER", f"Got it, I'll remember that - and I'll remind you on {reminder_time}."
@@ -100,13 +154,47 @@ def handle_command(command_text, conversation_history):
         return CommandResult("ANSWER", "Got it, I'll remember that.")
 
     if command_type == "NOTIFY":
-        return CommandResult("ANSWER", _send_phone_notification(command_text))
+        return CommandResult("ANSWER", _affirm(_send_phone_notification(core_text), was_question))
+
+    if command_type == "OPEN":
+        target = normalize_text(core_text)[len(OPEN_PREFIX):].strip()
+        return CommandResult("ANSWER", _affirm(open_target(target), was_question))
+
+    if command_type == "VOLUME_UP":
+        volume_up()
+        return CommandResult("ANSWER", _affirm("Turning the volume up.", was_question))
+
+    if command_type == "VOLUME_DOWN":
+        volume_down()
+        return CommandResult("ANSWER", _affirm("Turning the volume down.", was_question))
+
+    if command_type == "VOLUME_MUTE":
+        volume_mute()
+        return CommandResult("ANSWER", _affirm("Muted.", was_question))
+
+    if command_type == "SCREENSHOT":
+        try:
+            path = take_screenshot()
+            return CommandResult("ANSWER", _affirm(f"Screenshot saved to {path}.", was_question))
+        except Exception as error:
+            print("Screenshot failed:", error)
+            return CommandResult("ANSWER", "I couldn't take a screenshot right now.")
+
+    if command_type == "BATTERY":
+        return CommandResult("ANSWER", get_battery_status())
+
+    if command_type == "WEATHER":
+        try:
+            return CommandResult("ANSWER", get_weather_report())
+        except Exception as error:
+            print("Weather lookup failed, falling back to web search:", error)
+            # cai no caminho normal do LLM (busca na web + nuvem) abaixo
 
     # command_type == "LLM"
-    if is_incomplete_command(command_text, MIN_COMMAND_WORDS, INCOMPLETE_TRAILING_WORDS):
+    if is_incomplete_command(core_text, MIN_COMMAND_WORDS, INCOMPLETE_TRAILING_WORDS):
         return CommandResult("INCOMPLETE", "Could you finish that thought?")
 
-    memory_result = find_conversation(command_text)
+    memory_result = find_conversation(core_text)
 
     if memory_result.status == "hit":
         print("Cache Hit - Resposta do BdD")
@@ -121,9 +209,9 @@ def handle_command(command_text, conversation_history):
         )
 
     print("Cache Miss")
-    answer = _get_llm_answer(command_text, conversation_history)
-    conversation_history.append((command_text, answer))
-    save_conversation(command_text, answer)
+    answer = _get_llm_answer(core_text, conversation_history)
+    conversation_history.append((core_text, answer))
+    save_conversation(core_text, answer)
     return CommandResult("ANSWER", answer)
 
 

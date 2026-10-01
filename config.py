@@ -95,6 +95,74 @@ REMINDER_DEFAULT_HOUR = 9
 # A cada quantos segundos o Nico verifica se algum lembrete venceu.
 REMINDER_CHECK_INTERVAL_SECONDS = 30
 
+# --- Recursos estilo "Jarvis": abrir apps/sites, volume, print, bateria ----
+# Apps conhecidos do Windows (nome falado -> comando pra abrir). Qualquer
+# coisa fora dessa lista cai no SITE_SHORTCUTS ou, por último, numa busca
+# no Google.
+APP_SHORTCUTS = {
+    "notepad": "notepad",
+    "calculator": "calc",
+    "paint": "mspaint",
+    "file explorer": "explorer",
+    "explorer": "explorer",
+    "settings": "ms-settings:",
+    "task manager": "taskmgr",
+    "control panel": "control",
+    "command prompt": "cmd",
+    "cmd": "cmd",
+    "spotify": "spotify:",
+}
+
+SITE_SHORTCUTS = {
+    "youtube": "https://youtube.com",
+    "google": "https://google.com",
+    "gmail": "https://mail.google.com",
+    "github": "https://github.com",
+    "whatsapp": "https://web.whatsapp.com",
+    "netflix": "https://netflix.com",
+    "twitter": "https://twitter.com",
+    "x": "https://twitter.com",
+    "reddit": "https://reddit.com",
+    "wikipedia": "https://wikipedia.org",
+    "instagram": "https://instagram.com",
+    "facebook": "https://facebook.com",
+    "tiktok": "https://tiktok.com",
+    "linkedin": "https://linkedin.com",
+    "discord": "https://discord.com/app",
+    "telegram": "https://web.telegram.org",
+    "twitch": "https://twitch.tv",
+    "pinterest": "https://pinterest.com",
+    "chrome": None,  # tratado à parte: abre uma aba em branco do navegador padrão
+    "google chrome": None,
+    "browser": None,
+}
+
+OPEN_PREFIX = "open "
+
+# Controle de volume: em vez de exigir uma frase exata ("turn up the
+# volume"), basta a palavra "volume" aparecer em algum lugar da frase
+# junto de uma destas palavras de direção, em qualquer ordem - assim
+# "increase my volume", "turn my volume up", "volume up" etc. todos batem.
+VOLUME_UP_WORDS = {"up", "higher", "increase", "increases", "louder", "raise", "more"}
+VOLUME_DOWN_WORDS = {"down", "lower", "decrease", "decreases", "quieter", "reduce", "less"}
+VOLUME_MUTE_WORDS = {"mute", "muted", "silence", "silent"}
+# Essas duas valem mesmo sem a palavra "volume" na frase (ex.: só "mute"
+# ou só "louder" sozinho já é claro o suficiente).
+VOLUME_MUTE_TRIGGERS = ("mute", "silence")
+
+SCREENSHOT_TRIGGERS = ("take a screenshot", "take screenshot", "capture the screen", "screenshot")
+SCREENSHOT_FOLDER = "screenshots"
+
+BATTERY_TRIGGERS = ("battery level", "how much battery", "check my battery", "battery status", "how is my battery")
+
+# "weather" já está em REALTIME_KEYWORDS (cai na busca web genérica), mas
+# esses gatilhos pegam a pergunta antes disso, pra usar a API gratuita do
+# Open-Meteo (mais rápida e confiável que busca + LLM pra isso).
+WEATHER_TRIGGERS = ("weather", "is it raining", "is it going to rain", "how hot is it", "how cold is it")
+# Cidade padrão (opcional, lida do .env). Se vazia, o Nico tenta descobrir
+# a cidade atual pelo IP (ip-api.com, grátis, sem chave).
+WEATHER_CITY = os.environ.get("WEATHER_CITY", "")
+
 # --- IA na nuvem (reforço para perguntas difíceis) -------------------------
 # Chaves lidas do arquivo .env (nunca comitado - já está no .gitignore).
 # Onde conseguir cada uma, de graça:

@@ -9,3 +9,5 @@ pywebview
 python-dotenv
 python-docx
 dateparser
+psutil
+Pillow

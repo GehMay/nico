@@ -35,7 +35,9 @@ The project is split into modules (entry point is still `nico.py`):
 - `config.py` - constants (wake words, DB path, Ollama settings, matching thresholds, voice
   settings, cloud API keys read from `.env` via `python-dotenv`, realtime-query keywords, graph edge
   threshold).
-- `text_utils.py` - `normalize_text()`, `tokenize()`, `is_incomplete_command()`, `is_realtime_query()`.
+- `text_utils.py` - `normalize_text()`, `tokenize()`, `is_incomplete_command()`, `is_realtime_query()`,
+  `strip_request_wrapper()` (strips a leading polite phrase like "can you"/"please" and reports
+  whether the request was question-shaped - see "Follow-up round 10" below).
 - `database.py` - `open_database()`, `create_table()`, `save_conversation()`, `fetch_all_conversations()`.
 - `memory.py` - `find_conversation()` and the shared `keyword_score()` (Jaccard similarity), used both
   for cache lookup (`MemoryResult` with status `hit`/`ambiguous`/`miss`) and for building the memory
@@ -55,6 +57,10 @@ The project is split into modules (entry point is still `nico.py`):
 - `reminders.py` - `parse_due_date()`, `maybe_schedule_reminder()`, `check_due_reminders()`,
   `reminder_loop()`: natural-language date/time parsing (`dateparser`) plus a background thread that
   fires due reminders via Telegram and local speech (see "Follow-up round 7" below).
+- `system_control.py` - `open_target()`, `volume_up()`/`volume_down()`/`volume_mute()`,
+  `take_screenshot()`, `get_battery_status()` (see "Follow-up round 9" below).
+- `weather.py` - `get_weather_report()`: free weather via Open-Meteo, no API key (see "Follow-up
+  round 9" below).
 - `commands.py` - `classify_command()`, `handle_command()`, `resolve_clarification()`; returns a
   `CommandResult` with kind `ANSWER`, `CLARIFY`, or `INCOMPLETE`. The internal `_get_llm_answer()`
   decides local vs. web-search-plus-cloud vs. cloud-as-reliability-fallback (see "Cloud reinforcement"
@@ -287,6 +293,120 @@ actually schedules something that fires at the right time, instead of only being
   "remember my birthday is in December") will still schedule a reminder, since there's no attempt to
   distinguish "this fact happens to contain a date" from "please alert me at this date" - that would
   need deeper intent classification than this project currently has.
+
+### Follow-up round 8: desktop shortcut (2026-09-30)
+
+- `Iniciar Nico.bat` (project root): `cd`s into the project folder, then runs
+  `start "Nico" /min py -3.11 nico.py` - a minimized console window, titled "Nico", in the right
+  working directory (needed since `DB_PATH`, `tts_cache/`, etc. are relative paths).
+- A desktop shortcut ("Nico.lnk") was created pointing at that `.bat`. The user's actual Desktop
+  folder is OneDrive-redirected to `C:\Users\usuario\OneDrive\Área de Trabalho` (same parent folder as
+  the project itself), not the default `C:\Users\usuario\Desktop` - confirmed via
+  `[Environment]::GetFolderPath("Desktop")` before creating the shortcut, rather than assuming.
+  **Lesson: never assume the Desktop/Documents/etc. path on this machine - OneDrive folder
+  redirection means the real path can differ from the Windows default.**
+- Tested end-to-end: launching the `.bat` starts the `python3.11` process and the web panel responds
+  on `http://127.0.0.1:5000/`. Note for future testing: invoking the `.bat`/`start` command through
+  Git Bash's `cmd.exe` with nested quotes was unreliable (the process silently failed to launch) -
+  PowerShell's `Start-Process` is the reliable way to test a Windows shortcut/batch file from this
+  environment.
+- Auto-start on boot was discussed, then explicitly declined by the user ("não vamos iniciá-lo junto
+  com meu notebook, mudei essa ideia") - only the desktop icon stands; do not add a Startup-folder
+  shortcut unless they ask again.
+- Follow-up: the user wanted a nicer icon than the default `.bat` one. `scripts/make_icon.py` (a
+  one-off utility script, not part of the running app) generates `nico_icon.ico` with Pillow - a
+  glowing cyan/purple orb matching the HUD's color scheme, rendered at the sizes Windows actually
+  uses (16/24/32/48/64/128/256) so it stays crisp at every icon size. The desktop shortcut's
+  `IconLocation` now points at it. Re-run `py -3.11 scripts/make_icon.py` to regenerate if the HUD's
+  color scheme ever changes and the icon should follow.
+
+### Follow-up round 9: classic "Jarvis" features (2026-10-01)
+
+The user asked to look at what common open-source "Jarvis" voice-assistant projects do and adopt
+what makes sense now. Implemented the safe, reversible, high-value ones; explicitly skipped anything
+destructive (shutdown/restart/lock screen) since those interrupt the user's session and the project's
+Safety rules require explicit confirmation before destructive actions - that would need a
+confirmation flow this project doesn't have yet.
+
+- `system_control.py`:
+  - `open_target(name)` - "open chrome", "open youtube", etc. Checks `config.APP_SHORTCUTS` (Windows
+    apps, via `subprocess.Popen`/`os.startfile`) then `config.SITE_SHORTCUTS` (websites, via
+    `webbrowser.open`), and falls back to a Google search for anything unrecognized - so it never
+    just fails silently on an unknown name.
+  - `volume_up()` / `volume_down()` / `volume_mute()` - pure `ctypes` calls to
+    `user32.keybd_event` with the Windows volume virtual-key codes. No extra dependency needed (no
+    `pycaw`, no `keyboard` package) - this is the simplest free way to do it on Windows.
+  - `take_screenshot()` - `PIL.ImageGrab.grab()` (Pillow, already a dependency for the desktop icon),
+    saved with a timestamp into `config.SCREENSHOT_FOLDER` (`screenshots/`, gitignored).
+  - `get_battery_status()` - `psutil.sensors_battery()`; reports gracefully ("doesn't report a
+    battery") on a desktop PC with no battery.
+- `weather.py` - `get_weather_report()`: real weather via Open-Meteo (`api.open-meteo.com`, free, no
+  API key, no signup) instead of relying on the generic Tavily-search-plus-cloud-LLM path for this
+  one very common question. Uses `config.WEATHER_CITY` if set, otherwise auto-detects the city via
+  free IP geolocation (`ip-api.com`). On any failure, `commands.py` falls back to the normal
+  realtime-search path rather than erroring out (the "WEATHER_TRIGGERS" check happens before the
+  existing "weather" entry in `REALTIME_KEYWORDS`, so that path still exists as a safety net).
+- New intents in `classify_command()`/`handle_command()`: `OPEN` (`config.OPEN_PREFIX = "open "`),
+  `VOLUME_UP`/`VOLUME_DOWN`/`VOLUME_MUTE`, `SCREENSHOT`, `BATTERY`, `WEATHER` - all checked before the
+  generic `LLM` fallback, same pattern as every other intent in this file.
+- Deliberately NOT added: shutdown/restart/sleep/lock-screen voice commands, and Spotify/music
+  playback control (needs OAuth). Both remain candidates if the user asks for them specifically, with
+  a confirmation step required for anything destructive.
+
+### Follow-up round 10: polite phrasing, typo tolerance, social media shortcuts (2026-10-01)
+
+Two real problems surfaced from actual use: "can you open my instagram" didn't match the `OPEN`
+intent at all (it only matched a bare `"open "` prefix), and the user wanted Nico to sound more
+natural - acknowledging a question-phrased request ("can you...?") differently from a direct order
+("open...").
+
+- `config.SITE_SHORTCUTS` gained Instagram, Facebook, TikTok, LinkedIn, Discord, Telegram, Twitch,
+  Pinterest - "open <social network>" just opens it in the browser. (Deep API access - reading
+  notifications, posting, etc. - was explicitly explained to the user as not feasible the same way
+  Groq/Tavily/Drive were: official platform APIs are locked down against this kind of automation and
+  require developer/business review, and unofficial scraping-style automation risks the account being
+  banned - this was a deliberate explanation, not an oversight, and nothing of that kind was built.)
+- `text_utils.strip_request_wrapper(text)` - new general-purpose helper, used at the very top of
+  `handle_command()` (`core_text, was_question = strip_request_wrapper(command_text)`), and `core_text`
+  is what every classification/trigger check and downstream action now uses (previously it was
+  `command_text` throughout). It strips a leading polite phrase ("can you", "could you please",
+  "would you", "will you", "please") and reports whether the original looked like a question
+  (started with "can/could/would/will you"). This is the actual fix for the "can you open..." bug -
+  it's a general fix, not OPEN-specific, so it also helps every other trigger-based intent
+  (`NOTIFY`, `VOLUME_*`, `SCREENSHOT`, `REMEMBER`, etc.) recognize politely-phrased requests.
+  `REMEMBER_RECALL_PREFIXES` ("do you remember...") is unaffected since "do you" isn't in the
+  stripped-prefix list - recall questions still correctly fall through to the LLM path.
+- `commands._affirm(message, was_question)`: when the original request was question-shaped, prefixes
+  the action's response with "Sure, " (lowercasing the next word) - e.g. "can you mute?" -> "Sure,
+  muted."; a direct "mute" -> just "Muted." This is applied to `OPEN`, `NOTIFY`, `VOLUME_*`, and
+  `SCREENSHOT` (the "do something" intents) - not to `BATTERY`/`WEATHER`/`TIME` etc., which are
+  informational answers rather than actions, so the distinction doesn't apply there.
+- `system_control.open_target()` is now typo-tolerant: speech-to-text mishearings like "instragram"
+  for "instagram" are matched via `difflib.get_close_matches` (cutoff 0.75) against the known
+  `APP_SHORTCUTS`/`SITE_SHORTCUTS` names, after first stripping filler words a spoken request tends
+  to include ("my", "the", "a", "an", "may" - "may" specifically because STT sometimes mishears "my"
+  as "may", "please"). Falls back to the previous behavior (try as a bare URL, then Google search) if
+  nothing is close enough.
+
+### Follow-up round 11: volume-up trigger fix (2026-10-01)
+
+Real bug the user hit right after round 10: "it lowers my volume but isn't increasing it." Root
+cause - `VOLUME_UP_TRIGGERS`/`VOLUME_DOWN_TRIGGERS` were fixed exact phrases ("turn up the volume",
+"increase the volume"), so natural variations like "increase my volume" or "turn my volume up"
+(different word order / "my" instead of "the") never matched, while whatever down-phrasing the user
+happened to use apparently matched one of the fixed down-phrases by luck.
+
+- Replaced both with **word-set matching**: `config.VOLUME_UP_WORDS`/`VOLUME_DOWN_WORDS`/
+  `VOLUME_MUTE_WORDS` are sets of individual direction words (up/higher/increase/louder/raise/more,
+  down/lower/decrease/quieter/reduce/less, mute/silence/...). `classify_command()` now checks: if the
+  normalized text contains "volume" anywhere **and** shares any word with the matching direction set
+  (word order doesn't matter), classify accordingly. "louder"/"quieter" alone (without the word
+  "volume") still work as a fallback, same as before.
+- **Lesson for any future trigger-phrase list in this project: prefer "keyword(s) present anywhere in
+  the sentence" over "this exact phrase substring" whenever the phrasing is something a person would
+  naturally say several different ways. Exact-phrase triggers look like they work in testing (because
+  the tester tends to type the same phrasing used to write the trigger) but silently miss real speech
+  variation - which is exactly what happened here and in round 10's "can you open" bug.**
 
 ## Future Goals (explicitly deferred, not started)
 
