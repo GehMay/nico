@@ -11,10 +11,9 @@ from PIL import ImageGrab
 
 from config import APP_SHORTCUTS, SCREENSHOT_FOLDER, SITE_SHORTCUTS
 
-# Palavras de preenchimento que aparecem em pedidos falados ("open MY
-# instagram") mas não fazem parte do nome do app/site em si. "may" entra
-# aqui também porque o reconhecimento de voz às vezes ouve "my" como "may".
-_FILLER_WORDS = {"my", "the", "a", "an", "may", "please"}
+# Palavras de preenchimento que aparecem em pedidos falados ("abra o MEU
+# instagram") mas não fazem parte do nome do app/site em si.
+_FILLER_WORDS = {"o", "a", "os", "as", "meu", "minha", "meus", "minhas", "favor"}
 
 # Cutoff de similaridade (0 a 1) para aceitar um nome parecido mas não
 # idêntico (ex.: "instragram" reconhecido em vez de "instagram") como o
@@ -75,9 +74,9 @@ def open_target(spoken_name):
                 os.startfile(command)
             else:
                 subprocess.Popen(command, shell=True)
-            return f"Opening {name}."
+            return f"Abrindo {name}."
         except OSError as error:
-            return f"I couldn't open {name}: {error}"
+            return f"Não consegui abrir {name}: {error}"
 
     if name in SITE_SHORTCUTS:
         url = SITE_SHORTCUTS[name]
@@ -85,15 +84,15 @@ def open_target(spoken_name):
             webbrowser.open("about:blank")
         else:
             webbrowser.open(url)
-        return f"Opening {name}."
+        return f"Abrindo {name}."
 
     # Não conhecido - tenta abrir como site direto, senão busca no Google.
     if "." in name and " " not in name:
         webbrowser.open(f"https://{name}")
-        return f"Opening {name}."
+        return f"Abrindo {name}."
 
     webbrowser.open(f"https://www.google.com/search?q={quote(name)}")
-    return f"I didn't recognize {name}, so I searched it on Google instead."
+    return f"Não reconheci {name}, então pesquisei no Google."
 
 
 def take_screenshot():
@@ -109,9 +108,9 @@ def take_screenshot():
 def get_battery_status():
     battery = psutil.sensors_battery()
     if battery is None:
-        return "This device doesn't report a battery - it's probably a desktop."
+        return "Este dispositivo não informa bateria - provavelmente é um desktop."
 
     percent = round(battery.percent)
     if battery.power_plugged:
-        return f"Battery is at {percent} percent and charging."
-    return f"Battery is at {percent} percent, not charging."
+        return f"A bateria está em {percent} por cento e carregando."
+    return f"A bateria está em {percent} por cento, sem carregar."

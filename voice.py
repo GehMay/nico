@@ -29,11 +29,11 @@ def is_wake_word(text):
 
 def _listen_once(set_status, timeout, phrase_time_limit=None):
     with sr.Microphone() as source:
-        set_status("Listening")
+        set_status("Ouvindo")
         recognizer.adjust_for_ambient_noise(source, duration=0.5)
         audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
-    set_status("Thinking")
-    return recognizer.recognize_google(audio, language="en-US")
+    set_status("Pensando")
+    return recognizer.recognize_google(audio, language="pt-BR")
 
 
 def voice_cycle(conversation_history, set_status):
@@ -51,10 +51,10 @@ def voice_cycle(conversation_history, set_status):
     print("Google heard the wake word:", repr(text))
 
     if not is_wake_word(text):
-        speak("I don't know that command yet.", set_status)
+        speak("Ainda não conheço esse comando.", set_status)
         return
 
-    speak("Yes? I'm listening.", set_status)
+    speak("Sim, estou ouvindo.", set_status)
 
     while True:
         try:
@@ -67,7 +67,7 @@ def voice_cycle(conversation_history, set_status):
             continue
         except sr.RequestException as error:
             print("Speech recognition service unavailable:", error)
-            speak("I can't reach the speech recognition service right now.", set_status)
+            speak("Não consigo acessar o serviço de reconhecimento de voz agora.", set_status)
             break
 
         print("Google heard the command:", repr(command_text))
@@ -100,7 +100,7 @@ def voice_cycle(conversation_history, set_status):
 
         except requests.RequestException as error:
             print("Ollama request failed:", error)
-            speak("I can't reach my local language model right now.", set_status)
+            speak("Não consigo acessar meu modelo de linguagem local agora.", set_status)
 
 
 def voice_loop(conversation_history, set_status):
@@ -109,5 +109,5 @@ def voice_loop(conversation_history, set_status):
             voice_cycle(conversation_history, set_status)
         except Exception as error:
             print("Unexpected error in voice cycle:", error)
-            set_status("Error - retrying")
+            set_status("Erro - tentando novamente")
             time.sleep(2)

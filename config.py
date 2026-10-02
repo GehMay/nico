@@ -4,7 +4,9 @@ from dotenv import load_dotenv
 
 load_dotenv()  # lê variáveis de um arquivo .env local (fora do Git), se existir
 
-WAKE_WORDS = ["nico", "nicolò", "nicolo", "nick", "nic"]
+# Comparados sem acento (text_utils.normalize_text agora remove acentos),
+# por isso aqui ficam só formas sem acento.
+WAKE_WORDS = ["nico", "nicolo", "nick", "nic"]
 WAKE_WORD_ALIASES = {
     "niko": "nico",
     "nikko": "nico",
@@ -33,22 +35,23 @@ OLLAMA_KEEP_ALIVE = "30m"
 
 # Voz local de fallback (pyttsx3/SAPI5), usada só se a voz neural falhar
 # (ex.: sem internet). No Windows deste projeto só há vozes femininas
-# instaladas (Maria/pt-BR, Zira/en-US) - por isso o fallback não é
-# masculino, mas ele só entra em ação se a voz neural não estiver
-# disponível.
-VOICE_INDEX = 1
+# instaladas (Maria/pt-BR, Zira/en-US) - como o Nico agora fala português,
+# o fallback usa a Maria (pt-BR), que ao menos pronuncia o idioma certo
+# (índice 1/Zira seria inglês lendo texto em português, pior ainda).
+VOICE_INDEX = 0
 
 # Voz neural (Microsoft Edge Read Aloud, via biblioteca edge-tts) - mais
 # natural e masculina, é a voz principal do Nico. Precisa de internet.
-# Outras opções masculinas em en-US: "en-US-ChristopherNeural",
-# "en-US-EricNeural", "en-US-DavisNeural".
-NEURAL_VOICE = "en-US-GuyNeural"
+# "pt-BR-AntonioNeural" é a única voz masculina em pt-BR disponível no
+# edge-tts hoje (confirmado via edge_tts.list_voices()) - combina bem com
+# a personalidade calma e cavalheiresca/estilo Jarvis pedida para o Nico.
+NEURAL_VOICE = "pt-BR-AntonioNeural"
 USE_NEURAL_VOICE = True
 
 # Cache em disco dos áudios já gerados pela voz neural (chave = texto +
 # voz). Acelera bastante frases repetidas (saudações, avisos de erro,
-# "could you finish that thought?" etc.), já que evita chamar o edge-tts
-# de novo pela rede para algo que já foi falado antes.
+# "poderia terminar o que estava dizendo?" etc.), já que evita chamar o
+# edge-tts de novo pela rede para algo que já foi falado antes.
 USE_TTS_CACHE = True
 TTS_CACHE_DIR = "tts_cache"
 
@@ -61,32 +64,26 @@ MAX_CLARIFICATION_CANDIDATES = 2
 
 # Heurística simples para detectar comando incompleto.
 MIN_COMMAND_WORDS = 2
+# Comparados sem acento (ver text_utils._strip_accents), por isso aqui vão
+# sem acento mesmo ("nao" cobre "não", etc.).
 INCOMPLETE_TRAILING_WORDS = {
-    "and", "but", "or", "so", "because", "if", "that", "which", "when",
-    "with", "to", "of", "the", "a", "an",
+    "e", "mas", "ou", "entao", "porque", "se", "que", "quando",
+    "com", "para", "de", "do", "da", "o", "a", "um", "uma",
 }
 
 # Frases que indicam um pedido para o Nico guardar um fato pessoal (ex.:
-# "remember I have a test Friday", "don't forget my meeting at 5").
-# "do you remember" / "what do you remember" ficam de fora de propósito -
-# isso é uma pergunta (recall), não um pedido pra guardar algo novo.
-REMEMBER_TRIGGERS = ("remind me", "don't forget", "note that", "remember")
-REMEMBER_RECALL_PREFIXES = ("do you remember", "what do you remember", "can you remember what")
-
-# --- Notificações via Telegram (CallMeBot, grátis) --------------------------
-# CallMeBot manda uma mensagem de texto pro seu Telegram via uma requisição
-# HTTP simples, sem precisar de chave de API - só precisa autorizar o bot
-# uma vez (mandando /start pra @CallMeBot_txtbot no Telegram).
-# TELEGRAM_USER = seu username do Telegram (sem @), lido do .env.
-TELEGRAM_USER = os.environ.get("TELEGRAM_USER", "")
-TELEGRAM_API_URL = "https://api.callmebot.com/text.php"
-
-# Frases que pedem pro Nico mandar uma mensagem/avisar no celular.
-NOTIFY_TRIGGERS = ("text my phone", "message my phone", "notify my phone", "send me a message")
+# "lembre que tenho uma prova na sexta", "não esqueça da reunião às 5").
+# "você lembra" / "do que você lembra" ficam de fora de propósito - isso é
+# uma pergunta (recall), não um pedido pra guardar algo novo.
+REMEMBER_TRIGGERS = (
+    "me lembre de", "me lembra de", "nao esqueca", "anote que", "anota que",
+    "lembre que", "lembra que", "lembre", "lembra",
+)
+REMEMBER_RECALL_PREFIXES = ("voce lembra", "do que voce lembra", "o que voce lembra")
 
 # --- Lembretes com hora marcada ---------------------------------------------
-# Quando um REMEMBER tem uma data/hora dentro (ex.: "remember I have a test
-# Friday at 2pm"), o Nico agenda um aviso de verdade (Telegram + fala em voz
+# Quando um REMEMBER tem uma data/hora dentro (ex.: "lembre que tenho uma
+# prova na sexta às 14h"), o Nico agenda um aviso de verdade (fala em voz
 # alta) pra aquele horário, em vez de só guardar o fato.
 REMINDER_TIMEZONE = "America/Sao_Paulo"
 # Se o texto tiver uma data mas nenhuma hora explícita (ex.: só "Friday"),
@@ -101,14 +98,21 @@ REMINDER_CHECK_INTERVAL_SECONDS = 30
 # no Google.
 APP_SHORTCUTS = {
     "notepad": "notepad",
+    "bloco de notas": "notepad",
     "calculator": "calc",
+    "calculadora": "calc",
     "paint": "mspaint",
     "file explorer": "explorer",
     "explorer": "explorer",
+    "explorador de arquivos": "explorer",
     "settings": "ms-settings:",
+    "configuracoes": "ms-settings:",
     "task manager": "taskmgr",
+    "gerenciador de tarefas": "taskmgr",
     "control panel": "control",
+    "painel de controle": "control",
     "command prompt": "cmd",
+    "prompt de comando": "cmd",
     "cmd": "cmd",
     "spotify": "spotify:",
 }
@@ -135,30 +139,36 @@ SITE_SHORTCUTS = {
     "chrome": None,  # tratado à parte: abre uma aba em branco do navegador padrão
     "google chrome": None,
     "browser": None,
+    "navegador": None,
 }
 
-OPEN_PREFIX = "open "
+# Vários jeitos naturais de pedir pra abrir algo em português - checados
+# com startswith, então são prefixos completos (com o espaço no final).
+OPEN_PREFIXES = ("abra ", "abrir ", "abre ")
 
-# Controle de volume: em vez de exigir uma frase exata ("turn up the
-# volume"), basta a palavra "volume" aparecer em algum lugar da frase
-# junto de uma destas palavras de direção, em qualquer ordem - assim
-# "increase my volume", "turn my volume up", "volume up" etc. todos batem.
-VOLUME_UP_WORDS = {"up", "higher", "increase", "increases", "louder", "raise", "more"}
-VOLUME_DOWN_WORDS = {"down", "lower", "decrease", "decreases", "quieter", "reduce", "less"}
-VOLUME_MUTE_WORDS = {"mute", "muted", "silence", "silent"}
-# Essas duas valem mesmo sem a palavra "volume" na frase (ex.: só "mute"
-# ou só "louder" sozinho já é claro o suficiente).
-VOLUME_MUTE_TRIGGERS = ("mute", "silence")
+# Controle de volume: em vez de exigir uma frase exata, basta a palavra
+# "volume" (ou "som") aparecer em algum lugar da frase junto de uma destas
+# palavras de direção, em qualquer ordem - assim "aumenta o volume",
+# "coloca o som mais alto", "abaixa o volume" etc. todos batem.
+VOLUME_KEYWORDS = {"volume", "som"}
+VOLUME_UP_WORDS = {"aumenta", "aumentar", "aumente", "sobe", "suba", "alto", "mais"}
+VOLUME_DOWN_WORDS = {"diminui", "diminuir", "diminua", "abaixa", "abaixe", "baixo", "reduz", "reduza", "menos"}
+VOLUME_MUTE_WORDS = {"mudo", "mudar", "silencio", "silencia", "silencie"}
+# Essas valem mesmo sem a palavra "volume"/"som" na frase (ex.: só "mudo"
+# sozinho já é claro o suficiente).
+VOLUME_MUTE_TRIGGERS = ("mudo", "silencio", "silencia")
 
-SCREENSHOT_TRIGGERS = ("take a screenshot", "take screenshot", "capture the screen", "screenshot")
+SCREENSHOT_TRIGGERS = ("tira um print", "tire um print", "tirar um print", "captura de tela", "print da tela", "screenshot")
 SCREENSHOT_FOLDER = "screenshots"
 
-BATTERY_TRIGGERS = ("battery level", "how much battery", "check my battery", "battery status", "how is my battery")
+# "bateria" sozinho já é um gatilho claro e natural o suficiente (mesmo
+# espírito da lição do round 11: preferir palavra-chave solta a frase exata).
+BATTERY_TRIGGERS = ("bateria",)
 
-# "weather" já está em REALTIME_KEYWORDS (cai na busca web genérica), mas
-# esses gatilhos pegam a pergunta antes disso, pra usar a API gratuita do
-# Open-Meteo (mais rápida e confiável que busca + LLM pra isso).
-WEATHER_TRIGGERS = ("weather", "is it raining", "is it going to rain", "how hot is it", "how cold is it")
+# "clima"/"tempo" já estão em REALTIME_KEYWORDS (cai na busca web genérica),
+# mas esses gatilhos pegam a pergunta antes disso, pra usar a API gratuita
+# do Open-Meteo (mais rápida e confiável que busca + LLM pra isso).
+WEATHER_TRIGGERS = ("previsao do tempo", "como esta o tempo", "vai chover", "esta chovendo", "clima", "quantos graus")
 # Cidade padrão (opcional, lida do .env). Se vazia, o Nico tenta descobrir
 # a cidade atual pelo IP (ip-api.com, grátis, sem chave).
 WEATHER_CITY = os.environ.get("WEATHER_CITY", "")
@@ -183,11 +193,12 @@ TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
 CLOUD_TIMEOUT = 30
 
 # Palavras que indicam que a pergunta provavelmente precisa de informação
-# atual/da internet (não apenas de um modelo de linguagem maior).
+# atual/da internet (não apenas de um modelo de linguagem maior). Sem
+# acento, como tudo que é comparado via normalize_text.
 REALTIME_KEYWORDS = {
-    "today", "now", "currently", "current", "latest", "news", "weather",
-    "forecast", "price", "prices", "stock", "stocks", "score", "election",
-    "happening", "recent", "recently", "yesterday", "tonight",
+    "hoje", "agora", "atualmente", "atual", "ultimo", "ultima", "ultimas",
+    "noticias", "clima", "tempo", "previsao", "preco", "precos", "cotacao",
+    "placar", "eleicao", "acontecendo", "recente", "recentemente", "ontem",
 }
 
 # --- Documentos locais (pastas sincronizadas do Google Drive) --------------

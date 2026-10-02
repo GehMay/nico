@@ -5,7 +5,7 @@ import threading
 conversation_history = []
 
 _lock = threading.Lock()
-_status = "Nico is Starting..."
+_status = "Nico está iniciando..."
 
 
 def get_status():

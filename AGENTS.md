@@ -2,20 +2,26 @@
 
 ## Purpose
 
-Nico is a local English voice assistant for Windows, originally started as a personal learning
-project. The user decided that learning Python through this project was not working for them and
-asked for the project to be finished directly, so they can study Python separately through basic,
-dedicated exercises instead. As of this update, the project is considered functionally finished:
-all previously planned phases are implemented and the codebase is in a working, reasonably robust
-state. Further changes are done directly by Claude on request, without the incremental-teaching
+Nico is a local Portuguese (Brazilian) voice assistant for Windows, originally started as a personal
+learning project. The user decided that learning Python through this project was not working for
+them and asked for the project to be finished directly, so they can study Python separately through
+basic, dedicated exercises instead. As of this update, the project is considered functionally
+finished: all previously planned phases are implemented and the codebase is in a working, reasonably
+robust state. Further changes are done directly by Claude on request, without the incremental-teaching
 workflow described below.
+
+Nico's personality (speech recognition, TTS voice, and every spoken/written reply) is calm, friendly,
+and a little gentlemanly/courteous - explicitly modeled after Jarvis (Tony Stark's assistant): warm
+but composed, never curt, always sounds glad to help (see "Follow-up round 14" below).
 
 ## Current Stack
 
 - Python 3.11
-- SpeechRecognition with Google recognition (`en-US`)
-- edge-tts (Microsoft Edge neural voice, `en-US-GuyNeural`) as the primary voice, pygame for
-  playback; pyttsx3 kept only as an offline fallback voice
+- SpeechRecognition with Google recognition (`pt-BR`)
+- edge-tts (Microsoft Edge neural voice, `pt-BR-AntonioNeural` - the only male pt-BR voice edge-tts
+  currently offers) as the primary voice, pygame for playback; pyttsx3 kept only as an offline
+  fallback voice (uses the Maria/pt-BR system voice, index 0, so the fallback is at least in the
+  right language even though it sounds more robotic)
 - pywebview as the desktop window shell (renders the HTML/CSS/JS HUD via the Windows WebView2
   runtime, built into Windows 11) - CustomTkinter/Tkinter are no longer used
 - Flask local web server: serves the HUD UI, the memory galaxy, and the phone/tablet companion panel
@@ -52,11 +58,9 @@ The project is split into modules (entry point is still `nico.py`):
 - `facts.py` - `search_facts()` and `build_facts_prompt()`: same approach as `documents.py`, but over
   the `facts` SQLite table (personal facts the user explicitly asked Nico to remember - see
   "Follow-up round 5" below).
-- `notify.py` - `send_telegram_message()`: free Telegram notifications via CallMeBot, no API key (see
-  "Follow-up round 6" below).
 - `reminders.py` - `parse_due_date()`, `maybe_schedule_reminder()`, `check_due_reminders()`,
   `reminder_loop()`: natural-language date/time parsing (`dateparser`) plus a background thread that
-  fires due reminders via Telegram and local speech (see "Follow-up round 7" below).
+  fires due reminders via local speech (see "Follow-up round 7" and "Follow-up round 13" below).
 - `system_control.py` - `open_target()`, `volume_up()`/`volume_down()`/`volume_mute()`,
   `take_screenshot()`, `get_battery_status()` (see "Follow-up round 9" below).
 - `weather.py` - `get_weather_report()`: free weather via Open-Meteo, no API key (see "Follow-up
@@ -408,10 +412,143 @@ happened to use apparently matched one of the fixed down-phrases by luck.
   the tester tends to type the same phrasing used to write the trigger) but silently miss real speech
   variation - which is exactly what happened here and in round 10's "can you open" bug.**
 
+### Follow-up round 12: "call me" via Telegram voice call (2026-10-01)
+
+A real phone call through a carrier still needs a paid telephony service (Twilio etc.) and remains a
+future goal (see below). But CallMeBot - already authorized for the "text my phone" feature - also
+offers a free voice-call API: it calls the user inside the Telegram app itself and reads a message
+aloud via text-to-speech. Since this reuses the *same* authorization the user already did (the
+one-time `/start` to `@CallMeBot_txtbot`), no new setup was needed.
+
+- `notify.make_telegram_call(text=None)` - GET to CallMeBot's `start.php` (`config.TELEGRAM_CALL_API_URL`),
+  same `TELEGRAM_USER` as the text feature. Caps the message at 256 characters (CallMeBot's limit) and
+  repeats it twice (`rpt=2`). Raises if `TELEGRAM_USER` is empty or the request fails - same pattern as
+  `send_telegram_message`.
+- New `CALL` intent in `classify_command()` (`config.CALL_TRIGGERS`: "call me", "phone me", "give me a
+  call", "call my phone") and `commands._call_phone()` in `handle_command()`, following the exact same
+  shape as the `NOTIFY`/`_send_phone_notification()` pair, including the `_affirm()` question/order
+  distinction from round 10 ("can you call me?" -> "Sure, calling you now."; "call me" -> "Calling you
+  now - check your Telegram.").
+- This is a Telegram voice call, not a real telephone call through the carrier - worth keeping in mind
+  since the user's phone doesn't ring as a normal call, it rings inside Telegram.
+
+**Superseded by round 13 below**: CallMeBot turned out to require payment (their free tier stopped
+being usable for this), so the user asked to remove it entirely - this includes the `CALL` feature
+just described, and the pre-existing `NOTIFY` feature and down-alert from round 6.
+
+### Follow-up round 13: removed CallMeBot/Telegram entirely (2026-10-01)
+
+Right after round 12 shipped, CallMeBot started asking for payment, so the user said to drop
+everything tied to it - not just the brand-new `CALL` feature, but the older `NOTIFY` ("text my
+phone...") feature and the Ollama/cloud down-alert from round 6 as well, since all three depended on
+the same CallMeBot account.
+
+- Deleted `notify.py` entirely (`send_telegram_message()`, `make_telegram_call()`).
+- `commands.py`: removed the `NOTIFY` and `CALL` intents from `classify_command()`, the
+  `_send_phone_notification()`/`_call_phone()` helpers, their branches in `handle_command()`, and the
+  Telegram down-alert block in `_get_llm_answer()` (both local Ollama and cloud failing now just
+  returns the apology string, with nothing sent anywhere).
+- `config.py`: removed `TELEGRAM_USER`, `TELEGRAM_API_URL`, `TELEGRAM_CALL_API_URL`,
+  `NOTIFY_TRIGGERS`, `CALL_TRIGGERS`. `SITE_SHORTCUTS["telegram"]` (just opens web.telegram.org in a
+  browser) was kept - that's unrelated to the CallMeBot API, it's the same kind of "open <site>"
+  shortcut as any other social link.
+- `reminders.py`: `check_due_reminders()` no longer sends a Telegram message when a reminder fires -
+  it only speaks it out loud locally now (`tts.speak`). Timed reminders still work, just through one
+  channel instead of two.
+- `.env`/`.env.example`: removed `TELEGRAM_USER`.
+- **Lesson: before wiring up a "free" third-party API as a real feature, be ready for it to start
+  gating behind payment later - this is the second time in this project a free-tier assumption needed
+  walking back (the Groq/Gemini model-deprecation issue in round 4 was the first). Nothing stops this
+  from being revisited with a different provider later if the user wants phone notifications/calls
+  again.**
+
+### Follow-up round 14: full switch to Portuguese + Jarvis-style personality (2026-10-02)
+
+The user asked for the whole project to speak Portuguese, and for Nico's personality to be calm,
+friendly, a little gentlemanly, and close to how Jarvis talks. This touched speech recognition, the
+TTS voice, every trigger phrase, every hardcoded spoken/written reply, every LLM system prompt, the
+web UI text, and the reminder date parser. Python identifiers, function names, and code comments
+were deliberately left as they already were (a mix of English identifiers with mostly-Portuguese
+comments, as this project has used throughout) - translating those would be a large mechanical
+rename with no behavior benefit; "the project" here means what Nico says and understands.
+
+- **Voice in/out**: `voice.py`'s `recognize_google(..., language=...)` changed from `en-US` to
+  `pt-BR`. `tts.py`'s neural voice (`config.NEURAL_VOICE`) changed to `pt-BR-AntonioNeural` - checked
+  live via `edge_tts.list_voices()` that it exists and is male (it's currently the *only* male pt-BR
+  voice edge-tts offers). The local pyttsx3 fallback (`config.VOICE_INDEX`) switched from index 1
+  (Zira, en-US) to index 0 (Maria, pt-BR), so even the offline fallback speaks the right language.
+- **Accent-insensitive matching**: `text_utils.normalize_text()` now strips accents (NFD decompose +
+  drop combining marks) before comparing, so "não"/"nao", "é"/"e", "às"/"as" etc. all match the same
+  trigger regardless of exactly how the speech recognizer transcribes accents. Every trigger constant
+  in `config.py` is written without accents accordingly. This also fixed a bug *introduced* by this
+  same change and caught before shipping: `WAKE_WORDS` had an accented `"nicolò"` entry that would
+  have stopped matching once accent-folding was added - removed as a duplicate of the existing
+  unaccented `"nicolo"` entry.
+- **Every trigger phrase rewritten for natural Portuguese**, following the round 11 lesson (prefer
+  loose keyword matching over exact phrases): `REMEMBER_TRIGGERS` ("lembre", "lembra", "lembre que",
+  "me lembre de", "não esqueça", ...), `REMEMBER_RECALL_PREFIXES` ("você lembra", ...),
+  `OPEN_PREFIXES` (now a tuple - "abra "/"abrir "/"abre ", replacing the old single `OPEN_PREFIX`),
+  `VOLUME_KEYWORDS`/`VOLUME_UP_WORDS`/`VOLUME_DOWN_WORDS`/`VOLUME_MUTE_WORDS` ("volume"/"som" +
+  aumenta/sobe/mais or diminui/abaixa/menos or mudo/silêncio, any order), `SCREENSHOT_TRIGGERS`,
+  `WEATHER_TRIGGERS`, `REALTIME_KEYWORDS`, `INCOMPLETE_TRAILING_WORDS`. `BATTERY_TRIGGERS` was
+  simplified to just `("bateria",)` - a single loose keyword, same reasoning as round 11.
+  `APP_SHORTCUTS`/`SITE_SHORTCUTS` gained Portuguese aliases alongside the existing English/proper-noun
+  names (e.g. "calculadora" next to "calculator", "configuracoes" next to "settings") since people
+  say both; `system_control._FILLER_WORDS` changed from English filler words to Portuguese articles/
+  possessives ("o", "a", "meu", "minha", ...).
+- **Every hardcoded reply rewritten in Portuguese** with the calm/friendly/gentlemanly tone, across
+  `commands.py` (greetings, time, mood, thanks, capabilities, identity, remember confirmation, volume/
+  screenshot/battery/weather replies, the ambiguous-memory clarification question, the final "both
+  Ollama and cloud failed" apology), `system_control.py` (opening apps/sites, Google-search fallback,
+  battery status), `weather.py` (the weather sentence itself and all WMO weather-code descriptions,
+  e.g. "céu limpo", "chuva forte"). `commands._affirm()`'s question-vs-order prefix changed from
+  "Sure, " to "Claro, ", keeping the exact same mechanism from round 10.
+- **LLM personality**: the system prompts in `llm.py` (local Ollama) and `cloud_llm.py` (Groq/Gemini
+  fallback) were rewritten to explicitly describe the Jarvis-inspired calm/friendly/gentlemanly
+  personality and instruct the model to answer in Brazilian Portuguese, with updated few-shot
+  examples. `build_context_prompt()`'s conversation-history labels changed from "User:"/"Assistant:"
+  to "Usuário:"/"Nico:". The prompt-building helpers in `web_search.py`, `documents.py`, and
+  `facts.py` were likewise rewritten to ask for Portuguese answers. `llm.get_current_time()` switched
+  from a 12-hour `AM/PM` format to 24-hour (`%H:%M`), which is how time is normally said in Brazil.
+- **Reminder date parsing - a real `dateparser` bug found and fixed**: testing surfaced that
+  `dateparser`'s Portuguese (`pt`) locale badly misreads a weekday name combined with a numeric hour -
+  e.g. `"sexta-feira às 14h"` was parsed as *the 14th day of the month* at `00:00`, completely
+  discarding "sexta-feira" and misreading "14h" as a day-of-month instead of an hour. The same
+  happened with `"amanhã às 9h"` (wrong day *and* wrong hour). This reproduced consistently across
+  several phrasings, confirmed by inspecting `dateparser.search.search_dates()`'s raw output
+  directly - it's a locale limitation in the library itself, not a bug in this project's old logic.
+  Fix: `reminders.py` now extracts an explicit time phrase (`"às 14h"`, `"as 9 horas"`, with optional
+  "da manhã"/"da tarde"/"da noite") with a dedicated regex (`_extract_explicit_time`) *before* handing
+  the text to `dateparser`, strips that phrase out, and applies the extracted hour/minute manually
+  after `dateparser` resolves the date-only remainder (which it does correctly on its own, e.g. just
+  `"sexta-feira"` or `"amanhã"`). Verified with several real phrasings after the fix, all correct
+  (right weekday *and* right hour). Reminder date/time formatting also no longer depends on
+  `strftime("%A, %b %d")` (which would print English weekday/month names on this machine, since no
+  pt-BR locale is installed system-wide) - `reminders._format_local_pt()` builds the Portuguese
+  weekday/month names from two small lookup tuples instead, and uses 24-hour time.
+  **Lesson: don't trust a natural-language date library's locale support for anything beyond the
+  date itself without testing combined date+time phrasings specifically - locale quality for time
+  expressions can lag badly behind date expressions in the same library.**
+- **Web UI**: `web/index.html`, `web/memory.html`, `web/hud.js`, `web/galaxy.js` - all visible text
+  (placeholders, buttons, links, status words, the "You:"/"Nico:" transcript labels) translated to
+  Portuguese. The status words Nico reports while running (`state.py`'s default, and every
+  `set_status(...)` call in `voice.py`/`tts.py`) changed to Portuguese ("Ouvindo", "Pensando",
+  "Falando", "Erro - tentando novamente") and `hud.js`'s `STATUS_COLORS` map / error-prefix check
+  updated to match, so the HUD's color-coding still works correctly with the new words.
+- Verified end-to-end after all changes: full `py_compile` across every module, a battery of
+  `classify_command()` tests across ~20 natural Portuguese phrasings (greetings, time, mood, thanks,
+  capabilities, identity, remember, open, volume up/down/mute, screenshot, battery, weather - all
+  correct), a real `handle_command()` smoke test (including an actual screenshot and a real TTS
+  synthesis + playback through the new `pt-BR-AntonioNeural` voice), and the reminder date-parsing
+  fix re-tested with 5 phrasings after the regex fix (all correct).
+
 ## Future Goals (explicitly deferred, not started)
 
-- Phone calling from Nico - needs an external telephony service (e.g. Twilio, usually paid) or a
-  companion phone app; a local Python script alone cannot place phone calls.
+- Phone notifications and/or calls - previously implemented via CallMeBot (Telegram), removed in round
+  13 because CallMeBot started requiring payment. A real phone call through the carrier still needs an
+  external telephony service (e.g. Twilio, usually paid) or a companion phone app; a local Python
+  script alone cannot place a real carrier phone call. If the user wants this back, a genuinely free
+  alternative would need to be found first.
 - Reading the user's existing "Cursos" (or other) Drive folders is supported (`.docx` reader is ready)
   but not wired up - add the path to `NOTES_FOLDER`/`DOCUMENT_FOLDERS` if/when the user wants it
   searched.

@@ -85,7 +85,7 @@ def _speak_local(text):
 
 
 def speak(text, set_status):
-    set_status("Speaking")
+    set_status("Falando")
 
     if USE_NEURAL_VOICE:
         try:

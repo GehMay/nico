@@ -1,12 +1,12 @@
 const STATUS_COLORS = {
-  "Nico is Starting...": getComputedStyle(document.documentElement).getPropertyValue('--c-idle'),
-  "Listening": getComputedStyle(document.documentElement).getPropertyValue('--c-listening'),
-  "Thinking": getComputedStyle(document.documentElement).getPropertyValue('--c-thinking'),
-  "Speaking": getComputedStyle(document.documentElement).getPropertyValue('--c-speaking'),
+  "Nico está iniciando...": getComputedStyle(document.documentElement).getPropertyValue('--c-idle'),
+  "Ouvindo": getComputedStyle(document.documentElement).getPropertyValue('--c-listening'),
+  "Pensando": getComputedStyle(document.documentElement).getPropertyValue('--c-thinking'),
+  "Falando": getComputedStyle(document.documentElement).getPropertyValue('--c-speaking'),
 };
 
 function colorForStatus(message) {
-  if (message.startsWith("Error")) {
+  if (message.startsWith("Erro")) {
     return getComputedStyle(document.documentElement).getPropertyValue('--c-error');
   }
   return STATUS_COLORS[message] || getComputedStyle(document.documentElement).getPropertyValue('--c-idle');
@@ -36,7 +36,7 @@ async function refreshStatus() {
       applyStatus(data.status);
     }
   } catch (err) {
-    applyStatus("Error - connection lost");
+    applyStatus("Erro - conexão perdida");
   }
 }
 
@@ -49,7 +49,7 @@ async function refreshHistory() {
 
   const el = document.getElementById('transcript');
   el.innerHTML = data.history.map(h =>
-    `<div class="entry"><div class="you">You: ${h[0]}</div><div class="nico">Nico: ${h[1]}</div></div>`
+    `<div class="entry"><div class="you">Você: ${h[0]}</div><div class="nico">Nico: ${h[1]}</div></div>`
   ).join('');
   el.scrollTop = el.scrollHeight;
 }
@@ -72,7 +72,7 @@ document.getElementById('cmd').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') sendCommand();
 });
 
-applyStatus("Nico is Starting...");
+applyStatus("Nico está iniciando...");
 setInterval(refreshStatus, 500);
 setInterval(refreshHistory, 1500);
 refreshStatus();

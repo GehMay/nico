@@ -32,9 +32,10 @@ def build_search_prompt(command_text, results):
         for result in results
     )
     return (
-        "Use the web search results below to answer the question. "
-        "Reply in under three sentences, natural spoken English.\n\n"
-        f"Search results:\n{snippets}\n\n"
-        f"Question: {command_text}\n"
-        "Answer:"
+        "Use os resultados de busca abaixo para responder à pergunta. "
+        "Responda em português do Brasil, em até três frases, de forma "
+        "natural para fala.\n\n"
+        f"Resultados da busca:\n{snippets}\n\n"
+        f"Pergunta: {command_text}\n"
+        "Resposta:"
     )

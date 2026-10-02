@@ -13,7 +13,7 @@ async function loadGraph() {
   const data = await r.json();
 
   document.getElementById('count').innerText =
-    data.nodes.length + ' memories · ' + data.edges.length + ' connections';
+    data.nodes.length + ' memórias · ' + data.edges.length + ' conexões';
 
   const degree = {};
   data.edges.forEach(e => {
@@ -73,7 +73,7 @@ async function loadGraph() {
 }
 
 function showDetail(question, answer) {
-  document.getElementById('detail-q').innerText = 'You: ' + question;
+  document.getElementById('detail-q').innerText = 'Você: ' + question;
   document.getElementById('detail-a').innerText = 'Nico: ' + answer;
   document.getElementById('detail').style.display = 'block';
 }

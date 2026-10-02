@@ -8,15 +8,14 @@ from config import (
     BATTERY_TRIGGERS,
     INCOMPLETE_TRAILING_WORDS,
     MIN_COMMAND_WORDS,
-    NOTIFY_TRIGGERS,
-    OPEN_PREFIX,
+    OPEN_PREFIXES,
     REALTIME_KEYWORDS,
     REMEMBER_RECALL_PREFIXES,
     REMEMBER_TRIGGERS,
     SCREENSHOT_TRIGGERS,
     TAVILY_API_KEY,
-    TELEGRAM_USER,
     VOLUME_DOWN_WORDS,
+    VOLUME_KEYWORDS,
     VOLUME_MUTE_TRIGGERS,
     VOLUME_MUTE_WORDS,
     VOLUME_UP_WORDS,
@@ -27,7 +26,6 @@ from documents import build_document_prompt, search_documents
 from facts import build_facts_prompt, search_facts
 from llm import ask_ollama, build_context_prompt, get_current_time
 from memory import find_conversation
-from notify import send_telegram_message
 from reminders import maybe_schedule_reminder
 from system_control import get_battery_status, open_target, take_screenshot, volume_down, volume_mute, volume_up
 from text_utils import is_incomplete_command, is_realtime_query, normalize_text, strip_request_wrapper
@@ -46,42 +44,40 @@ def classify_command(command_text):
     normalized = normalize_text(command_text)
     words = normalized.split()
 
-    if any(word in {"time", "hour", "clock"} for word in words):
+    if any(word in {"hora", "horas", "relogio"} for word in words):
         return "TIME"
 
-    if any(word in {"hello", "hi", "hey"} for word in words):
+    if any(word in {"ola", "oi", "opa", "alo"} for word in words):
         return "GREETING"
 
-    if "how are you" in normalized or "how are you doing" in normalized:
+    if any(phrase in normalized for phrase in ("como voce esta", "como vai", "tudo bem")):
         return "MOOD"
 
-    if "thank you" in normalized:
+    if "obrigad" in normalized or "valeu" in normalized:
         return "THANKS"
 
-    if "what can you do" in normalized or "what are you able to do" in normalized:
+    if "o que voce pode fazer" in normalized or "o que voce sabe fazer" in normalized:
         return "CAPABILITIES"
 
-    if "who are you" in normalized or "what are you" in normalized:
+    if "quem e voce" in normalized or "o que e voce" in normalized:
         return "IDENTITY"
 
-    # "do you remember ...?" is a recall question, not a request to store a
-    # new fact - let it fall through to the LLM path (facts search included).
+    # "você lembra...?" é uma pergunta de recordação, não um pedido pra
+    # guardar um fato novo - deixa cair no caminho do LLM (que já busca
+    # nos fatos salvos).
     if not any(normalized.startswith(prefix) for prefix in REMEMBER_RECALL_PREFIXES):
         if any(trigger in normalized for trigger in REMEMBER_TRIGGERS):
             return "REMEMBER"
 
-    if any(trigger in normalized for trigger in NOTIFY_TRIGGERS):
-        return "NOTIFY"
-
-    if normalized.startswith(OPEN_PREFIX):
+    if normalized.startswith(OPEN_PREFIXES):
         return "OPEN"
 
     if any(trigger in normalized for trigger in VOLUME_MUTE_TRIGGERS):
         return "VOLUME_MUTE"
 
-    # "volume" + uma palavra de direção, em qualquer ordem na frase (ex.:
-    # "increase my volume", "turn my volume up", "volume up" - todas batem).
-    if "volume" in normalized:
+    # "volume"/"som" + uma palavra de direção, em qualquer ordem na frase
+    # (ex.: "aumenta o volume", "coloca o som mais alto") - todas batem.
+    if any(keyword in normalized for keyword in VOLUME_KEYWORDS):
         words_set = set(words)
         if words_set & VOLUME_MUTE_WORDS:
             return "VOLUME_MUTE"
@@ -89,12 +85,6 @@ def classify_command(command_text):
             return "VOLUME_UP"
         if words_set & VOLUME_DOWN_WORDS:
             return "VOLUME_DOWN"
-
-    if "louder" in normalized:
-        return "VOLUME_UP"
-
-    if "quieter" in normalized:
-        return "VOLUME_DOWN"
 
     if any(trigger in normalized for trigger in SCREENSHOT_TRIGGERS):
         return "SCREENSHOT"
@@ -109,14 +99,14 @@ def classify_command(command_text):
 
 
 def _affirm(message, was_question):
-    """Se o pedido veio em formato de pergunta ("can you open X?"), prefixa
-    a resposta com uma confirmação natural ("Sure, opening X."). Se veio
-    como ordem direta ("open X"), devolve a mensagem como está, sem
-    enrolação.
+    """Se o pedido veio em formato de pergunta ("você pode abrir X?"),
+    prefixa a resposta com uma confirmação cordial ("Claro, abrindo X.").
+    Se veio como ordem direta ("abra X"), devolve a mensagem como está,
+    sem enrolação - esse é o estilo calmo e um pouco cavalheiresco do Nico.
     """
     if not was_question or not message:
         return message
-    return "Sure, " + message[0].lower() + message[1:]
+    return "Claro, " + message[0].lower() + message[1:]
 
 
 def handle_command(command_text, conversation_history):
@@ -124,61 +114,63 @@ def handle_command(command_text, conversation_history):
     command_type = classify_command(core_text)
 
     if command_type == "TIME":
-        return CommandResult("ANSWER", f"The time is {get_current_time()}.")
+        return CommandResult("ANSWER", f"Agora são {get_current_time()}.")
 
     if command_type == "GREETING":
-        return CommandResult("ANSWER", "Hello! How can I help you today?")
+        return CommandResult("ANSWER", "Olá! Em que posso ajudar hoje?")
 
     if command_type == "MOOD":
-        return CommandResult("ANSWER", "I'm doing well, thanks for asking. How can I help?")
+        return CommandResult("ANSWER", "Estou bem, obrigado por perguntar. Como posso ajudar?")
 
     if command_type == "THANKS":
-        return CommandResult("ANSWER", "You're welcome!")
+        return CommandResult("ANSWER", "Por nada! Estou à disposição.")
 
     if command_type == "CAPABILITIES":
         return CommandResult(
             "ANSWER",
-            "I can answer questions, tell the time, chat with you, and help with simple local tasks."
+            "Posso responder perguntas, dizer a hora, conversar com você e ajudar com tarefas simples no computador."
         )
 
     if command_type == "IDENTITY":
-        return CommandResult("ANSWER", "I'm Nico, your local voice assistant.")
+        return CommandResult("ANSWER", "Eu sou o Nico, seu assistente de voz pessoal, sempre à sua disposição.")
 
     if command_type == "REMEMBER":
         save_fact(core_text)
         reminder_time = maybe_schedule_reminder(core_text)
         if reminder_time:
             return CommandResult(
-                "ANSWER", f"Got it, I'll remember that - and I'll remind you on {reminder_time}."
+                "ANSWER", f"Entendido, vou me lembrar disso - e aviso você {reminder_time}."
             )
-        return CommandResult("ANSWER", "Got it, I'll remember that.")
-
-    if command_type == "NOTIFY":
-        return CommandResult("ANSWER", _affirm(_send_phone_notification(core_text), was_question))
+        return CommandResult("ANSWER", "Entendido, vou me lembrar disso.")
 
     if command_type == "OPEN":
-        target = normalize_text(core_text)[len(OPEN_PREFIX):].strip()
+        normalized_core = normalize_text(core_text)
+        target = ""
+        for prefix in OPEN_PREFIXES:
+            if normalized_core.startswith(prefix):
+                target = normalized_core[len(prefix):].strip()
+                break
         return CommandResult("ANSWER", _affirm(open_target(target), was_question))
 
     if command_type == "VOLUME_UP":
         volume_up()
-        return CommandResult("ANSWER", _affirm("Turning the volume up.", was_question))
+        return CommandResult("ANSWER", _affirm("Aumentando o volume.", was_question))
 
     if command_type == "VOLUME_DOWN":
         volume_down()
-        return CommandResult("ANSWER", _affirm("Turning the volume down.", was_question))
+        return CommandResult("ANSWER", _affirm("Diminuindo o volume.", was_question))
 
     if command_type == "VOLUME_MUTE":
         volume_mute()
-        return CommandResult("ANSWER", _affirm("Muted.", was_question))
+        return CommandResult("ANSWER", _affirm("Silenciado.", was_question))
 
     if command_type == "SCREENSHOT":
         try:
             path = take_screenshot()
-            return CommandResult("ANSWER", _affirm(f"Screenshot saved to {path}.", was_question))
+            return CommandResult("ANSWER", _affirm(f"Captura de tela salva em {path}.", was_question))
         except Exception as error:
             print("Screenshot failed:", error)
-            return CommandResult("ANSWER", "I couldn't take a screenshot right now.")
+            return CommandResult("ANSWER", "Não consegui tirar a captura de tela agora.")
 
     if command_type == "BATTERY":
         return CommandResult("ANSWER", get_battery_status())
@@ -192,7 +184,7 @@ def handle_command(command_text, conversation_history):
 
     # command_type == "LLM"
     if is_incomplete_command(core_text, MIN_COMMAND_WORDS, INCOMPLETE_TRAILING_WORDS):
-        return CommandResult("INCOMPLETE", "Could you finish that thought?")
+        return CommandResult("INCOMPLETE", "Poderia terminar o que estava dizendo?")
 
     memory_result = find_conversation(core_text)
 
@@ -204,7 +196,7 @@ def handle_command(command_text, conversation_history):
         print("Cache Ambiguous - pedindo esclarecimento")
         return CommandResult(
             "CLARIFY",
-            "I found more than one similar memory. Could you say it again, a bit more specifically?",
+            "Encontrei mais de uma lembrança parecida com isso. Pode repetir de um jeito um pouco mais específico?",
             candidates=memory_result.candidates,
         )
 
@@ -213,27 +205,6 @@ def handle_command(command_text, conversation_history):
     conversation_history.append((core_text, answer))
     save_conversation(core_text, answer)
     return CommandResult("ANSWER", answer)
-
-
-def _send_phone_notification(command_text):
-    normalized = normalize_text(command_text)
-    message = command_text
-    for trigger in NOTIFY_TRIGGERS:
-        if trigger in normalized:
-            index = normalized.find(trigger)
-            rest = command_text[index + len(trigger):].strip(" ,:.-")
-            if rest:
-                message = rest
-            else:
-                message = "Nico here - you asked me to send a message."
-            break
-
-    try:
-        send_telegram_message(f"Nico: {message}")
-        return "Sent! Check your Telegram."
-    except Exception as error:
-        print("Telegram notification failed:", error)
-        return "I couldn't send the message right now."
 
 
 def _get_llm_answer(command_text, conversation_history):
@@ -292,24 +263,16 @@ def _get_llm_answer(command_text, conversation_history):
             return ask_cloud_fallback(build_context_prompt(command_text, conversation_history))
         except Exception as cloud_error:
             print("Cloud fallback also failed:", cloud_error)
-            if TELEGRAM_USER:
-                try:
-                    send_telegram_message(
-                        "Nico is down: both the local Ollama model and the cloud "
-                        "backup (Groq/Gemini) failed to answer."
-                    )
-                except Exception as notify_error:
-                    print("Also failed to send the down-alert notification:", notify_error)
-            return "I can't reach my local model or the cloud backup right now. Please try again in a moment."
+            return "No momento não consigo acessar nem o meu modelo local nem o apoio na nuvem. Poderia tentar de novo em um instante?"
 
 
 def resolve_clarification(reply_text, candidates, command_text, conversation_history):
     reply_tokens = normalize_text(reply_text).split()
 
     if candidates:
-        if any(word in reply_tokens for word in ("first", "one", "1")):
+        if any(word in reply_tokens for word in ("primeira", "primeiro", "um", "1")):
             return candidates[0][1]
-        if len(candidates) > 1 and any(word in reply_tokens for word in ("second", "two", "2")):
+        if len(candidates) > 1 and any(word in reply_tokens for word in ("segunda", "segundo", "dois", "2")):
             return candidates[1][1]
 
         best_answer = None

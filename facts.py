@@ -24,10 +24,11 @@ def search_facts(query_text, max_results=5):
 def build_facts_prompt(command_text, matches):
     facts_list = "\n".join(f"- {fact_text}" for _, fact_text in matches)
     return (
-        "The user previously asked you to remember the facts below. Use "
-        "them to answer the question if relevant. Reply in under three "
-        "sentences, natural spoken English.\n\n"
-        f"Remembered facts:\n{facts_list}\n\n"
-        f"Question: {command_text}\n"
-        "Answer:"
+        "O usuário pediu anteriormente para você lembrar dos fatos abaixo. "
+        "Use-os para responder à pergunta, se forem relevantes. Responda em "
+        "português do Brasil, em até três frases, de forma natural para "
+        "fala.\n\n"
+        f"Fatos lembrados:\n{facts_list}\n\n"
+        f"Pergunta: {command_text}\n"
+        "Resposta:"
     )

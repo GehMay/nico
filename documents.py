@@ -85,10 +85,10 @@ def search_documents(query_text, max_results=5):
 def build_document_prompt(command_text, matches):
     snippets = "\n\n".join(f"(from {name}):\n{section}" for _, name, section in matches)
     return (
-        "Use the notes below, from the user's saved research documents, to "
-        "answer the question. Reply in under three sentences, natural "
-        "spoken English.\n\n"
-        f"Notes:\n{snippets}\n\n"
-        f"Question: {command_text}\n"
-        "Answer:"
+        "Use as notas abaixo, dos documentos de pesquisa salvos pelo "
+        "usuário, para responder à pergunta. Responda em português do "
+        "Brasil, em até três frases, de forma natural para fala.\n\n"
+        f"Notas:\n{snippets}\n\n"
+        f"Pergunta: {command_text}\n"
+        "Resposta:"
     )
