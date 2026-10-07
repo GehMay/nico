@@ -11,3 +11,6 @@ python-docx
 dateparser
 psutil
 Pillow
+pvporcupine
+icalendar
+recurring-ical-events

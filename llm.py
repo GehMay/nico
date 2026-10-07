@@ -11,6 +11,7 @@ from config import (
     OLLAMA_TIMEOUT,
     OLLAMA_URL,
 )
+from personality import NICO_PERSONALITY_PROMPT
 
 
 def build_context_prompt(command_text, conversation_history):
@@ -31,13 +32,7 @@ def ask_ollama(prompt):
         json={
             "model": OLLAMA_MODEL,
             "prompt": (
-                "Você é o Nico, um assistente de voz local. Sua personalidade é "
-                "calma, amigável e um pouco cavalheiresca, no estilo do "
-                "Jarvis (o assistente do Homem de Ferro): educado, atencioso e "
-                "sempre à disposição, sem ser formal ou frio. "
-                "Responda em português do Brasil, em frases curtas e naturais. "
-                "Mantenha as respostas gentis, simples e em até duas frases. "
-                "Nunca se recuse a manter uma conversa normal. "
+                f"{NICO_PERSONALITY_PROMPT}\n\n"
                 "Se o usuário perguntar a hora atual, responda exatamente [TIME]. "
                 "Se o usuário disser olá ou perguntar como você está, responda "
                 "educadamente e de forma breve. "

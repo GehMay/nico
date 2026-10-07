@@ -5,29 +5,50 @@ import requests
 
 from cloud_llm import ask_cloud_fallback
 from config import (
+    AGENDA_TRIGGERS,
     BATTERY_TRIGGERS,
+    BRIEFING_TRIGGERS,
+    CALC_TRIGGERS,
     INCOMPLETE_TRAILING_WORDS,
     MIN_COMMAND_WORDS,
+    OPEN_DOCUMENTATION_TRIGGERS,
     OPEN_PREFIXES,
     REALTIME_KEYWORDS,
     REMEMBER_RECALL_PREFIXES,
     REMEMBER_TRIGGERS,
+    RESEARCH_TRIGGERS,
     SCREENSHOT_TRIGGERS,
     TAVILY_API_KEY,
+    TIMER_TRIGGERS,
     VOLUME_DOWN_WORDS,
     VOLUME_KEYWORDS,
     VOLUME_MUTE_TRIGGERS,
     VOLUME_MUTE_WORDS,
     VOLUME_UP_WORDS,
     WEATHER_TRIGGERS,
+    YOUTUBE_SEARCH_FILLER_WORDS,
 )
+from calculator import calculate_spoken, extract_expression
 from database import save_conversation, save_fact
 from documents import build_document_prompt, search_documents
 from facts import build_facts_prompt, search_facts
+from google_calendar import get_today_events
 from llm import ask_ollama, build_context_prompt, get_current_time
 from memory import find_conversation
-from reminders import maybe_schedule_reminder
-from system_control import get_battery_status, open_target, take_screenshot, volume_down, volume_mute, volume_up
+from reminders import get_today_agenda, maybe_schedule_reminder, schedule_timer
+from research import run_research
+from state import set_status
+from system_control import (
+    get_battery_status,
+    open_documentation,
+    open_target,
+    open_work_mode,
+    search_youtube,
+    take_screenshot,
+    volume_down,
+    volume_mute,
+    volume_up,
+)
 from text_utils import is_incomplete_command, is_realtime_query, normalize_text, strip_request_wrapper
 from weather import get_weather_report
 from web_search import build_search_prompt, search_web
@@ -62,12 +83,50 @@ def classify_command(command_text):
     if "quem e voce" in normalized or "o que e voce" in normalized:
         return "IDENTITY"
 
+    if any(trigger in normalized for trigger in BRIEFING_TRIGGERS):
+        return "BRIEFING"
+
+    if any(trigger in normalized for trigger in AGENDA_TRIGGERS):
+        return "AGENDA"
+
+    # Só vira CALC se der pra montar uma conta de verdade (número +
+    # operador) - senão "quanto é a distância até a lua" cairia aqui em
+    # vez de ir pro LLM, que sabe responder isso de verdade.
+    if any(trigger in normalized for trigger in CALC_TRIGGERS):
+        expression = extract_expression(command_text)
+        if expression and any(op in expression for op in ("+", "-", "*", "/")):
+            return "CALC"
+
+    if any(trigger in normalized for trigger in TIMER_TRIGGERS):
+        return "TIMER"
+
     # "você lembra...?" é uma pergunta de recordação, não um pedido pra
     # guardar um fato novo - deixa cair no caminho do LLM (que já busca
     # nos fatos salvos).
     if not any(normalized.startswith(prefix) for prefix in REMEMBER_RECALL_PREFIXES):
         if any(trigger in normalized for trigger in REMEMBER_TRIGGERS):
             return "REMEMBER"
+
+    if any(trigger in normalized for trigger in RESEARCH_TRIGGERS):
+        return "RESEARCH"
+
+    # "modo" em qualquer lugar da frase (ex.: "modo trabalho", "ativar o
+    # modo trabalho", "entra no modo estudos") - o nome do espaço é tudo
+    # que vem depois da palavra "modo".
+    if "modo" in words:
+        return "WORK_MODE"
+
+    if any(trigger in normalized for trigger in OPEN_DOCUMENTATION_TRIGGERS):
+        return "OPEN_DOCUMENTATION"
+
+    # "youtube" + algo mais além de só o nome do site - vira uma busca no
+    # YouTube ("toca X no youtube"), não o atalho genérico de abrir o site.
+    # Checado antes de OPEN_PREFIXES, senão "abra um vídeo de X no youtube"
+    # bateria ali primeiro (começa com "abra ").
+    if "youtube" in words:
+        query = _extract_youtube_query(normalized)
+        if query:
+            return "YOUTUBE_SEARCH"
 
     if normalized.startswith(OPEN_PREFIXES):
         return "OPEN"
@@ -134,6 +193,31 @@ def handle_command(command_text, conversation_history):
     if command_type == "IDENTITY":
         return CommandResult("ANSWER", "Eu sou o Nico, seu assistente de voz pessoal, sempre à sua disposição.")
 
+    if command_type == "BRIEFING":
+        return CommandResult("ANSWER", _morning_briefing())
+
+    if command_type == "AGENDA":
+        items = _combined_agenda_items()
+        if not items:
+            return CommandResult("ANSWER", "Você não tem nada agendado para hoje.")
+        return CommandResult("ANSWER", "Hoje você tem: " + "; ".join(items) + ".")
+
+    if command_type == "CALC":
+        result = calculate_spoken(core_text)
+        if result is None:
+            return CommandResult(
+                "ANSWER", "Não consegui entender essa conta. Pode repetir com números e uma operação, tipo 'quanto é 23 vezes 7'?"
+            )
+        return CommandResult("ANSWER", f"O resultado é {result}.")
+
+    if command_type == "TIMER":
+        duration = schedule_timer(core_text)
+        if not duration:
+            return CommandResult(
+                "ANSWER", "Não entendi a duração do timer. Pode dizer, por exemplo, 'timer de 10 minutos'?"
+            )
+        return CommandResult("ANSWER", _affirm(f"Prontinho, aviso você em {duration}.", was_question))
+
     if command_type == "REMEMBER":
         save_fact(core_text)
         reminder_time = maybe_schedule_reminder(core_text)
@@ -142,6 +226,25 @@ def handle_command(command_text, conversation_history):
                 "ANSWER", f"Entendido, vou me lembrar disso - e aviso você {reminder_time}."
             )
         return CommandResult("ANSWER", "Entendido, vou me lembrar disso.")
+
+    if command_type == "RESEARCH":
+        topic = _extract_after_trigger(core_text, RESEARCH_TRIGGERS)
+        if not topic:
+            return CommandResult("ANSWER", "Sobre qual tópico você quer que eu pesquise?")
+        return CommandResult("ANSWER", _affirm(_run_research(topic), was_question))
+
+    if command_type == "OPEN_DOCUMENTATION":
+        topic = _extract_after_trigger(core_text, OPEN_DOCUMENTATION_TRIGGERS)
+        return CommandResult("ANSWER", _affirm(open_documentation(topic), was_question))
+
+    if command_type == "YOUTUBE_SEARCH":
+        query = _extract_youtube_query(normalize_text(core_text))
+        return CommandResult("ANSWER", _affirm(search_youtube(query), was_question))
+
+    if command_type == "WORK_MODE":
+        words = normalize_text(core_text).split()
+        name = " ".join(words[words.index("modo") + 1:])
+        return CommandResult("ANSWER", _affirm(open_work_mode(name), was_question))
 
     if command_type == "OPEN":
         normalized_core = normalize_text(core_text)
@@ -202,9 +305,72 @@ def handle_command(command_text, conversation_history):
 
     print("Cache Miss")
     answer = _get_llm_answer(core_text, conversation_history)
-    conversation_history.append((core_text, answer))
     save_conversation(core_text, answer)
     return CommandResult("ANSWER", answer)
+
+
+def _extract_youtube_query(normalized_text):
+    """Remove palavras de preenchimento (ver config.YOUTUBE_SEARCH_FILLER_WORDS)
+    de uma frase já normalizada, deixando só o termo de busca. Devolve ""
+    se não sobrar nada (ex.: "abra o youtube" sozinho, sem termo nenhum).
+    """
+    tokens = [word for word in normalized_text.split() if word not in YOUTUBE_SEARCH_FILLER_WORDS]
+    return " ".join(tokens)
+
+
+def _extract_after_trigger(command_text, triggers):
+    """Devolve o que vem depois da frase-gatilho (ex.: depois de "pesquise
+    sobre" em "pesquise sobre buracos negros" devolve "buracos negros").
+    Devolve "" se nenhum gatilho for encontrado ou não houver nada depois.
+    """
+    normalized = normalize_text(command_text)
+    for trigger in triggers:
+        if trigger in normalized:
+            index = normalized.find(trigger)
+            rest = command_text[index + len(trigger):].strip(" ,:.-")
+            if rest:
+                return rest
+    return ""
+
+
+def _combined_agenda_items():
+    """Junta os lembretes do Nico com os eventos de hoje do Google
+    Calendar (se configurado - ver google_calendar.py), ordenados por
+    horário.
+    """
+    items = list(get_today_agenda() or [])
+    items.extend(get_today_events())
+    items.sort(key=lambda item: "99:99" if item.startswith("Dia todo") else item[:5])
+    return items
+
+
+def _morning_briefing():
+    parts = []
+
+    try:
+        parts.append(get_weather_report())
+    except Exception as error:
+        print("Weather lookup failed for briefing:", error)
+
+    agenda_items = _combined_agenda_items()
+    if agenda_items:
+        parts.append("Hoje você tem: " + "; ".join(agenda_items) + ".")
+    else:
+        parts.append("Você não tem nada agendado para hoje.")
+
+    return "Bom dia! " + " ".join(parts)
+
+
+def _run_research(topic):
+    set_status("Pesquisando")
+    try:
+        path = run_research(topic)
+        return f"Pesquisa concluída. Salvei o relatório em {path}."
+    except Exception as error:
+        print("Research failed:", error)
+        return "Não consegui concluir a pesquisa agora. Pode tentar de novo em um instante?"
+    finally:
+        set_status("Pensando")
 
 
 def _get_llm_answer(command_text, conversation_history):
@@ -236,7 +402,9 @@ def _get_llm_answer(command_text, conversation_history):
         except requests.RequestException as error:
             print("Local model unavailable for facts answer, falling back:", error)
 
+    set_status("Lendo documentos")
     document_matches = search_documents(command_text)
+    set_status("Pensando")
     if document_matches:
         try:
             print(f"Found {len(document_matches)} relevant note(s) in saved research documents")
@@ -263,7 +431,11 @@ def _get_llm_answer(command_text, conversation_history):
             return ask_cloud_fallback(build_context_prompt(command_text, conversation_history))
         except Exception as cloud_error:
             print("Cloud fallback also failed:", cloud_error)
-            return "No momento não consigo acessar nem o meu modelo local nem o apoio na nuvem. Poderia tentar de novo em um instante?"
+            set_status("Lendo documentos")
+            try:
+                document_matches = search_documents(command_text)
+            finally:
+                set_status("Pensando")
 
 
 def resolve_clarification(reply_text, candidates, command_text, conversation_history):
@@ -286,6 +458,5 @@ def resolve_clarification(reply_text, candidates, command_text, conversation_his
             return best_answer
 
     answer = _get_llm_answer(command_text, conversation_history)
-    conversation_history.append((command_text, answer))
     save_conversation(command_text, answer)
     return answer

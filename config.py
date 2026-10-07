@@ -21,6 +21,13 @@ WAKE_WORD_ALIASES = {
     "niku": "nico",
 }
 
+# --- Wake word offline (opcional, Picovoice Porcupine) ---------------------
+# Ver wake_word.py para o que isso faz e como configurar (conta grátis,
+# treinar uma wake word "Nico" customizada, baixar o .ppn). Vazio por
+# padrão - sem isso, o Nico detecta a wake word do jeito original (nuvem).
+PICOVOICE_ACCESS_KEY = os.environ.get("PICOVOICE_ACCESS_KEY", "")
+PICOVOICE_KEYWORD_PATH = os.environ.get("PICOVOICE_KEYWORD_PATH", "")
+
 DB_PATH = "nico_memory.db"
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
@@ -92,6 +99,29 @@ REMINDER_DEFAULT_HOUR = 9
 # A cada quantos segundos o Nico verifica se algum lembrete venceu.
 REMINDER_CHECK_INTERVAL_SECONDS = 30
 
+# "timer de 10 minutos", "cronômetro de 30 segundos" - um lembrete rápido,
+# sem precisar passar pelo fluxo de REMEMBER. Reaproveita a mesma tabela
+# de lembretes (ver reminders.schedule_timer()).
+TIMER_TRIGGERS = ("timer", "cronometro", "alarme")
+
+# "o que eu tenho hoje", "minha agenda" - lista os lembretes de hoje e,
+# se configurado, os eventos de hoje do Google Calendar (ver google_calendar.py).
+AGENDA_TRIGGERS = ("o que eu tenho hoje", "o que tenho hoje", "minha agenda", "agenda de hoje", "meus compromissos")
+
+# Endereço secreto no formato iCal da sua agenda do Google Calendar (ver
+# google_calendar.py para como conseguir). Vazio por padrão - sem isso, a
+# agenda do Nico mostra só os lembretes que você mesma pediu pra guardar.
+GOOGLE_CALENDAR_ICS_URL = os.environ.get("GOOGLE_CALENDAR_ICS_URL", "")
+
+# "bom dia" - clima + agenda do dia numa única fala, estilo briefing matinal.
+BRIEFING_TRIGGERS = ("bom dia", "resumo do dia", "me da um resumo", "me de um resumo")
+
+# "quanto é 23 vezes 7" - calculadora (ver calculator.py). O gatilho sozinho
+# não basta: só vira CALC se der pra extrair uma conta de verdade (ver
+# commands.classify_command()), senão "quanto é a distância até a lua" cairia
+# aqui por engano em vez de ir pro LLM.
+CALC_TRIGGERS = ("quanto e", "quanto da", "calcule", "calcula", "qual o resultado de")
+
 # --- Recursos estilo "Jarvis": abrir apps/sites, volume, print, bateria ----
 # Apps conhecidos do Windows (nome falado -> comando pra abrir). Qualquer
 # coisa fora dessa lista cai no SITE_SHORTCUTS ou, por último, numa busca
@@ -145,6 +175,37 @@ SITE_SHORTCUTS = {
 # Vários jeitos naturais de pedir pra abrir algo em português - checados
 # com startswith, então são prefixos completos (com o espaço no final).
 OPEN_PREFIXES = ("abra ", "abrir ", "abre ")
+OPEN_DOCUMENTATION_TRIGGERS = (
+    "documentacao oficial de ", "documentacao oficial do ", "documentacao oficial da ",
+    "documentacao de ", "documentacao do ", "documentacao da ",
+    "docs oficiais de ", "docs de ", "docs do ", "docs da ",
+)
+
+# "toca X no youtube", "abre um vídeo de X no youtube", "procura X no
+# youtube" - abre a busca do YouTube já com o termo (ver
+# system_control.search_youtube()). Palavras removidas pra sobrar só o
+# termo de busca de verdade.
+YOUTUBE_SEARCH_FILLER_WORDS = {
+    "abra", "abrir", "abre", "toca", "toque", "coloca", "coloque", "procura",
+    "procure", "pesquisa", "pesquise", "busca", "busque", "um", "uma", "o",
+    "a", "no", "do", "de", "por", "favor", "video", "youtube",
+}
+
+# --- "Modos de trabalho" (abrir vários sites/apps de uma vez) --------------
+# "modo <nome>" (ex.: "modo trabalho", "modo estudos") abre, de uma vez,
+# todos os sites/apps configurados para aquele modo - reaproveitando
+# APP_SHORTCUTS/SITE_SHORTCUTS (ver system_control.open_target()).
+# Cada modo vira uma variável de ambiente WORK_MODE_<NOME> no .env, com os
+# itens separados por vírgula (ex.: WORK_MODE_TRABALHO=gmail,github,notion.so) -
+# o nome depois de "WORK_MODE_" (em minúsculas) é o que você fala depois de
+# "modo". (Isso substitui uma tentativa anterior de abrir Espaços de
+# Trabalho nativos do Edge diretamente - inviável nesta versão do Edge,
+# ver "Follow-up round 15" no AGENTS.md para o motivo.)
+WORK_MODES = {
+    key[len("WORK_MODE_"):].lower(): [item.strip() for item in value.split(",") if item.strip()]
+    for key, value in os.environ.items()
+    if key.startswith("WORK_MODE_") and value
+}
 
 # Controle de volume: em vez de exigir uma frase exata, basta a palavra
 # "volume" (ou "som") aparecer em algum lugar da frase junto de uma destas
@@ -219,6 +280,17 @@ DOCUMENT_FOLDERS = [folder for folder in (DOCUMENTS_FOLDER, NOTES_FOLDER) if fol
 
 DOCUMENT_MATCH_THRESHOLD = 0.15
 DOCUMENT_SCAN_LIMIT = 30  # olha só os N arquivos mais recentes de cada pasta
+
+# --- "Modo sério" (pesquisa de verdade e salva um relatório em arquivo) ----
+# "pesquise sobre X" / "pesquisa sobre X" faz o Nico buscar na web (Tavily)
+# e usar a nuvem (Groq/Gemini) pra escrever um relatório mais completo que
+# uma resposta falada normal, e salva isso num arquivo .docx inspirado na ABNT. Usa a mesma
+# pasta de anotações (NOTES_FOLDER) se configurada - assim os relatórios
+# também ficam disponíveis pro Nico reler depois (documents.py já escaneia
+# essa pasta) - ou uma pasta local própria se NOTES_FOLDER não existir.
+RESEARCH_TRIGGERS = ("pesquise sobre", "pesquisa sobre", "faca uma pesquisa sobre", "pesquise a fundo sobre")
+RESEARCH_FOLDER = NOTES_FOLDER or "pesquisas"
+RESEARCH_MAX_RESULTS = 6
 
 # --- Grafo de memória (estilo "mini galáxia") -------------------------------
 # Pontuação mínima de similaridade (mesma escala de MATCH_THRESHOLD) para

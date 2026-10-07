@@ -3,6 +3,11 @@ const STATUS_COLORS = {
   "Ouvindo": getComputedStyle(document.documentElement).getPropertyValue('--c-listening'),
   "Pensando": getComputedStyle(document.documentElement).getPropertyValue('--c-thinking'),
   "Falando": getComputedStyle(document.documentElement).getPropertyValue('--c-speaking'),
+  "Pesquisando": getComputedStyle(document.documentElement).getPropertyValue('--c-research'),
+  "Lendo documentos": getComputedStyle(document.documentElement).getPropertyValue('--c-documents'),
+  "Aguardando aprovação": getComputedStyle(document.documentElement).getPropertyValue('--c-approval'),
+  "Executando ação": getComputedStyle(document.documentElement).getPropertyValue('--c-action'),
+  "Pausado": getComputedStyle(document.documentElement).getPropertyValue('--c-error'),
 };
 
 function colorForStatus(message) {
@@ -26,6 +31,15 @@ function applyStatus(message) {
   document.getElementById('status-text').innerText = message.toUpperCase();
 }
 
+function applyMicButton(micEnabled) {
+  const button = document.getElementById('mic-toggle');
+  const icon = document.getElementById('mic-icon');
+  const label = document.getElementById('mic-label');
+  button.classList.toggle('paused', !micEnabled);
+  icon.innerText = micEnabled ? '🎤' : '🔇';
+  label.innerText = micEnabled ? 'MICROFONE LIGADO' : 'MICROFONE PAUSADO';
+}
+
 let lastStatus = null;
 async function refreshStatus() {
   try {
@@ -35,8 +49,19 @@ async function refreshStatus() {
       lastStatus = data.status;
       applyStatus(data.status);
     }
+    applyMicButton(data.mic_enabled);
   } catch (err) {
     applyStatus("Erro - conexão perdida");
+  }
+}
+
+async function toggleMic() {
+  try {
+    const r = await fetch('/mic/toggle', { method: 'POST' });
+    const data = await r.json();
+    applyMicButton(data.mic_enabled);
+  } catch (err) {
+    console.error('Failed to toggle mic:', err);
   }
 }
 

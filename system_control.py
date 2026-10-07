@@ -9,11 +9,21 @@ from urllib.parse import quote
 import psutil
 from PIL import ImageGrab
 
-from config import APP_SHORTCUTS, SCREENSHOT_FOLDER, SITE_SHORTCUTS
+from config import APP_SHORTCUTS, SCREENSHOT_FOLDER, SITE_SHORTCUTS, WORK_MODES
+from text_utils import normalize_text
 
 # Palavras de preenchimento que aparecem em pedidos falados ("abra o MEU
 # instagram") mas não fazem parte do nome do app/site em si.
 _FILLER_WORDS = {"o", "a", "os", "as", "meu", "minha", "meus", "minhas", "favor"}
+_DOCUMENTATION_URLS = {
+    "python": "https://docs.python.org/3/",
+    "javascript": "https://developer.mozilla.org/en-US/docs/Web/JavaScript",
+    "typescript": "https://www.typescriptlang.org/docs/",
+    "flask": "https://flask.palletsprojects.com/",
+    "django": "https://docs.djangoproject.com/",
+    "sqlite": "https://www.sqlite.org/docs.html",
+    "ollama": "https://docs.ollama.com/",
+}
 
 # Cutoff de similaridade (0 a 1) para aceitar um nome parecido mas não
 # idêntico (ex.: "instragram" reconhecido em vez de "instagram") como o
@@ -93,6 +103,50 @@ def open_target(spoken_name):
 
     webbrowser.open(f"https://www.google.com/search?q={quote(name)}")
     return f"Não reconheci {name}, então pesquisei no Google."
+
+
+def search_youtube(query):
+    """Abre a busca do YouTube pro termo pedido (não dá pra abrir direto o
+    primeiro resultado sem a API do YouTube, que precisa de uma chave - ver
+    AGENTS.md). Retorna uma frase descrevendo o que fez.
+    """
+    webbrowser.open(f"https://www.youtube.com/results?search_query={quote(query)}")
+    return f'Buscando "{query}" no YouTube.'
+
+
+def open_documentation(topic):
+    """Abre uma busca por documentação oficial no navegador padrão."""
+    topic = topic.strip()
+    if not topic:
+        return "Qual documentação você quer abrir?"
+
+    documentation_url = _DOCUMENTATION_URLS.get(normalize_text(topic))
+    if documentation_url:
+        webbrowser.open(documentation_url, new=2)
+        return f"Abrindo a documentação oficial de {topic}."
+
+    query = quote(f"documentação oficial {topic}")
+    webbrowser.open(f"https://www.google.com/search?q={query}", new=2)
+    return f"Abrindo uma busca pela documentação oficial de {topic}."
+
+
+def open_work_mode(name):
+    """Abre, de uma vez, todos os sites/apps configurados para o "modo"
+    pedido (ver config.WORK_MODES) - cada item passa por open_target(), a
+    mesma lógica usada pra "abra o youtube" etc. Retorna uma frase
+    descrevendo o que fez.
+    """
+    targets = WORK_MODES.get(name)
+    if not targets:
+        if WORK_MODES:
+            known = ", ".join(sorted(WORK_MODES))
+            return f"Não tenho o modo \"{name}\" configurado. Os que conheço são: {known}."
+        return "Ainda não tenho nenhum modo configurado."
+
+    for target in targets:
+        open_target(target)
+
+    return f"Abrindo o modo {name}."
 
 
 def take_screenshot():

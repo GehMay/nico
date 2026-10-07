@@ -3,6 +3,8 @@ import time
 import requests
 import speech_recognition as sr
 
+import state
+import wake_word
 from commands import handle_command, resolve_clarification
 from config import WAKE_WORD_ALIASES, WAKE_WORDS
 from text_utils import normalize_text
@@ -36,23 +38,49 @@ def _listen_once(set_status, timeout, phrase_time_limit=None):
     return recognizer.recognize_google(audio, language="pt-BR")
 
 
-def voice_cycle(conversation_history, set_status):
+def _cloud_wake_word_detected(set_status):
+    """Detecta a wake word do jeito original (manda o áudio pro Google).
+    Devolve True se detectou a wake word, False se não (silêncio, não
+    entendeu, ou entendeu mas não era a wake word).
+    """
     try:
         text = _listen_once(set_status, timeout=10, phrase_time_limit=5)
     except sr.UnknownValueError:
         print("I didn't understand what you said. Try again.")
-        return
+        return False
     except sr.WaitTimeoutError:
-        return
+        return False
     except sr.RequestException as error:
         print("Speech recognition service unavailable:", error)
-        return
+        return False
 
     print("Google heard the wake word:", repr(text))
 
     if not is_wake_word(text):
         speak("Ainda não conheço esse comando.", set_status)
+        return False
+
+    return True
+
+
+def voice_cycle(conversation_history, set_status):
+    if not state.is_mic_enabled():
+        # Microfone pausado pelo botão do HUD - não abre o microfone nem
+        # manda nada pra nuvem enquanto estiver assim.
+        set_status("Pausado")
+        time.sleep(0.5)
         return
+
+    if wake_word.is_available():
+        try:
+            wake_word.listen_for_wake_word(set_status)
+        except Exception as error:
+            print("Offline wake-word detection failed, falling back to cloud this time:", error)
+            if not _cloud_wake_word_detected(set_status):
+                return
+    else:
+        if not _cloud_wake_word_detected(set_status):
+            return
 
     speak("Sim, estou ouvindo.", set_status)
 
@@ -88,14 +116,17 @@ def voice_cycle(conversation_history, set_status):
                     reply_text, result.candidates, command_text, conversation_history
                 )
                 print("Final answer:", repr(answer))
+                conversation_history.append((command_text, answer))
                 speak(answer, set_status)
 
             elif result.kind == "INCOMPLETE":
                 print("Incomplete command:", repr(command_text))
+                conversation_history.append((command_text, result.text))
                 speak(result.text, set_status)
 
             else:
                 print("Final answer:", repr(result.text))
+                conversation_history.append((command_text, result.text))
                 speak(result.text, set_status)
 
         except requests.RequestException as error:

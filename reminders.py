@@ -5,7 +5,7 @@ import time
 from dateparser.search import search_dates
 
 from config import REMINDER_DEFAULT_HOUR, REMINDER_TIMEZONE
-from database import fetch_due_reminders, mark_reminder_notified, save_reminder
+from database import fetch_due_reminders, fetch_reminders_between, mark_reminder_notified, save_reminder
 from tts import speak
 
 _SEARCH_SETTINGS = {
@@ -135,6 +135,54 @@ def maybe_schedule_reminder(command_text):
 
     local_time = due_utc.astimezone()
     return _format_local_pt(local_time)
+
+
+# "timer de 10 minutos", "cronometro de 30 segundos" - reaproveita o
+# "em N horas/minutos" que parse_due_date já sabe interpretar corretamente
+# (ver _RELATIVE_DURATION_RE acima), em vez de duplicar essa lógica.
+_TIMER_DURATION_RE = re.compile(
+    r"(\d+)\s*(segundos?|minutos?|horas?)\b", re.IGNORECASE
+)
+
+
+def schedule_timer(command_text):
+    """Agenda um timer simples a partir de uma duração falada (ex.: "timer
+    de 10 minutos"). Retorna a duração formatada ("10 minutos") se
+    conseguiu agendar, ou None se não achou uma duração reconhecível.
+    """
+    match = _TIMER_DURATION_RE.search(command_text.lower())
+    if not match:
+        return None
+
+    quantity, unit = match.group(1), match.group(2)
+    due_utc = parse_due_date(f"em {quantity} {unit}")
+    if due_utc is None:
+        return None
+
+    save_reminder(f"o timer de {quantity} {unit} terminou", due_utc.isoformat())
+    return f"{quantity} {unit}"
+
+
+def get_today_agenda():
+    """Devolve uma lista de strings "HH:MM - texto" com os lembretes de
+    hoje (passados ou futuros), ou None se não houver nenhum.
+    """
+    now_local = datetime.datetime.now().astimezone()
+    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + datetime.timedelta(days=1)
+
+    start_utc = start_local.astimezone(datetime.timezone.utc).isoformat()
+    end_utc = end_local.astimezone(datetime.timezone.utc).isoformat()
+
+    rows = fetch_reminders_between(start_utc, end_utc)
+    if not rows:
+        return None
+
+    items = []
+    for reminder_text, due_at in rows:
+        due_local = datetime.datetime.fromisoformat(due_at).astimezone()
+        items.append(f"{due_local.strftime('%H:%M')} - {reminder_text}")
+    return items
 
 
 def check_due_reminders(set_status):

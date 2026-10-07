@@ -1,3 +1,5 @@
+import threading
+
 from flask import Flask, jsonify, request, send_from_directory
 
 import state
@@ -6,6 +8,7 @@ from config import GRAPH_EDGE_THRESHOLD
 from database import fetch_all_conversations
 from memory import keyword_score
 from text_utils import tokenize
+from tts import speak
 
 app = Flask(__name__, static_folder="web", static_url_path="/assets")
 
@@ -22,7 +25,13 @@ def memory_page():
 
 @app.route("/status")
 def status():
-    return jsonify(status=state.get_status())
+    return jsonify(status=state.get_status(), mic_enabled=state.is_mic_enabled())
+
+
+@app.route("/mic/toggle", methods=["POST"])
+def mic_toggle():
+    state.set_mic_enabled(not state.is_mic_enabled())
+    return jsonify(mic_enabled=state.is_mic_enabled())
 
 
 @app.route("/history")
@@ -69,6 +78,19 @@ def command():
         return jsonify(error="empty text"), 400
 
     result = handle_command(text, state.conversation_history)
+
+    # Guarda no histórico compartilhado (mostrado no transcript do HUD) -
+    # antes isso só acontecia quando a pergunta caía no caminho do LLM
+    # (cache miss), então comandos como "que horas são" ou "bom dia"
+    # nunca apareciam no chat, embora respondessem normalmente.
+    state.conversation_history.append((text, result.text))
+
+    # Fala a resposta em voz alta mesmo vindo do chat/painel escrito (não só
+    # de comandos de voz) - roda numa thread à parte pra não atrasar a
+    # resposta HTTP esperando o áudio terminar de tocar. Independe do
+    # microfone estar pausado ou não: o botão de pausa só afeta a escuta.
+    threading.Thread(target=speak, args=(result.text, state.set_status), daemon=True).start()
+
     return jsonify(kind=result.kind, answer=result.text)
 
 

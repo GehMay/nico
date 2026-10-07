@@ -13,8 +13,8 @@ PYTHON / NICO
 py -3.11 --version
 Mostra a versão do Python 3.11 que será usada.
 
-py -3.11 -m py_compile nico.py
-Verifica erros de sintaxe em nico.py. Não inicia o Nico e não testa microfone, Ollama ou o banco.
+py -3.11 -m py_compile config.py text_utils.py database.py memory.py llm.py cloud_llm.py web_search.py documents.py facts.py reminders.py system_control.py weather.py research.py calculator.py wake_word.py google_calendar.py commands.py tts.py voice.py state.py web_server.py desktop_app.py nico.py
+Verifica erros de sintaxe em todos os módulos do projeto. Não inicia o Nico e não testa microfone, Ollama, Google Calendar ou o banco.
 
 py -3.11 nico.py
 Inicia o Nico: abre a janela, começa a escutar pelo microfone e usa o Ollama quando necessário. Para encerrar, feche a janela do Nico.
@@ -61,6 +61,15 @@ BANCO SQLITE
 O banco local do Nico chama-se nico_memory.db e é criado pelo próprio programa. O arquivo está listado no .gitignore para não ser enviado ao Git.
 
 Para visualizar o banco, abra o DB Browser for SQLite pelo menu Iniciar, selecione nico_memory.db e use a aba Browse Data para escolher a tabela conversation. É melhor fechar o Nico antes de abrir ou editar o banco no DB Browser, para evitar bloqueio do arquivo.
+
+DOCUMENTAÇÃO E PESQUISA
+-----------------------
+
+Fale: "Abra a documentação do Python" (também funciona com JavaScript, TypeScript, Flask, Django, SQLite e Ollama).
+Nico abre a página oficial conhecida no navegador padrão do Windows (Edge, se ele for o navegador padrão). Para outros assuntos, abre uma busca por documentação oficial; confira o domínio antes de confiar no resultado.
+
+Fale: "Pesquise sobre <assunto>".
+Nico pesquisa com Tavily, redige um relatório e salva um arquivo Word .docx em Nico Notes (G:\Meu Drive\Nico Notes, se NOTES_FOLDER estiver configurada). O documento tem estrutura e apresentação inspiradas na ABNT, com resumo, palavras-chave, seções, margens A4 e referências numeradas a partir das fontes retornadas. É um formato para leitura; não garante conformidade acadêmica completa quando as fontes não fornecem autor ou data de publicação.
 
 CODEBASE MEMORY MCP
 -------------------

@@ -10,9 +10,11 @@ finished: all previously planned phases are implemented and the codebase is in a
 robust state. Further changes are done directly by Claude on request, without the incremental-teaching
 workflow described below.
 
-Nico's personality (speech recognition, TTS voice, and every spoken/written reply) is calm, friendly,
-and a little gentlemanly/courteous - explicitly modeled after Jarvis (Tony Stark's assistant): warm
-but composed, never curt, always sounds glad to help (see "Follow-up round 14" below).
+Nico's personality is calm, attentive, discreet, perceptive, and courteous, with light humor when
+appropriate. He adapts his tone to the situation: candid and helpful when something fails, honest
+about uncertainty, empathetic with sensitive topics, and natural rather than theatrical. He does not
+claim real human feelings or experiences. Keep responses in Brazilian Portuguese unless the user
+requests another language.
 
 ## Current Stack
 
@@ -61,10 +63,23 @@ The project is split into modules (entry point is still `nico.py`):
 - `reminders.py` - `parse_due_date()`, `maybe_schedule_reminder()`, `check_due_reminders()`,
   `reminder_loop()`: natural-language date/time parsing (`dateparser`) plus a background thread that
   fires due reminders via local speech (see "Follow-up round 7" and "Follow-up round 13" below).
-- `system_control.py` - `open_target()`, `volume_up()`/`volume_down()`/`volume_mute()`,
-  `take_screenshot()`, `get_battery_status()` (see "Follow-up round 9" below).
+- `system_control.py` - `open_target()`, `open_documentation()` (official URLs or browser search),
+  `volume_up()`/`volume_down()`/`volume_mute()`, `take_screenshot()`, `get_battery_status()`
+  (see "Follow-up round 9" below), `open_work_mode()` (see "Follow-up round 15" below).
 - `weather.py` - `get_weather_report()`: free weather via Open-Meteo, no API key (see "Follow-up
   round 9" below).
+- `research.py` - `run_research()`: "modo sério" ("pesquise sobre X") - searches the web (Tavily),
+  asks the cloud (Groq/Gemini) to write a longer written report (not a short spoken reply), and
+  saves an ABNT-inspired, timestamped `.docx` with numbered source references to
+  `config.RESEARCH_FOLDER` (see "Follow-up round 15" below).
+- `calculator.py` - `calculate_spoken()`/`extract_expression()`: a safe (AST-based, no `eval()`)
+  arithmetic calculator for spoken math like "quanto é 23 vezes 7" (see "Follow-up round 17" below).
+- `wake_word.py` - `is_available()`/`listen_for_wake_word()`: optional 100%-local wake-word detection
+  via Picovoice Porcupine, used instead of the cloud-based check in `voice.py` when configured (see
+  "Follow-up round 17" below).
+- `google_calendar.py` - `get_today_events()`: optional read-only Google Calendar integration via a
+  private iCal feed URL (no OAuth app needed), merged into the agenda/briefing commands (see
+  "Follow-up round 19" below).
 - `commands.py` - `classify_command()`, `handle_command()`, `resolve_clarification()`; returns a
   `CommandResult` with kind `ANSWER`, `CLARIFY`, or `INCOMPLETE`. The internal `_get_llm_answer()`
   decides local vs. web-search-plus-cloud vs. cloud-as-reliability-fallback (see "Cloud reinforcement"
@@ -84,7 +99,8 @@ The project is split into modules (entry point is still `nico.py`):
 - `desktop_app.py` - `open_desktop_window()`: waits for the Flask server to be reachable, then opens
   it in a pywebview native window (this *is* the GUI now - no separate Tkinter window).
 - `voice.py` - `is_wake_word()`, `voice_cycle()`, `voice_loop()`; runs in a daemon thread started from
-  `nico.py`.
+  `nico.py`. `voice_cycle()` uses `wake_word.is_available()` to pick between offline (Porcupine) and
+  cloud (Google) wake-word detection each cycle (see "Follow-up round 17" below).
 - `nico.py` - wires the modules together, starts the voice thread and the web server thread (port
   5000, listening on `0.0.0.0` so phones/tablets on the same Wi-Fi can reach it), prints the LAN URL
   to the console, then opens the pywebview window (blocking call, replaces the old `app.mainloop()`).
@@ -542,6 +558,291 @@ rename with no behavior benefit; "the project" here means what Nico says and und
   synthesis + playback through the new `pt-BR-AntonioNeural` voice), and the reminder date-parsing
   fix re-tested with 5 phrasings after the regex fix (all correct).
 
+### Follow-up round 15: Edge "work mode" + a real research ("modo sério") mode (2026-10-02)
+
+The user asked for two new "Nico actually touches my computer" features: a work mode that opens a
+specific Edge Workspace, and a research mode where Nico searches a topic and saves a report to a
+file (optionally on Drive).
+
+- **Work mode** (`"modo trabalho"`, `"modo estudos"`, etc.) - ended up **not** using Edge's native
+  Workspaces feature at all, after a dead end investigating it directly:
+  - First tried `msedge --launch-workspace="<id>"` (a real but undocumented CLI flag) plus a
+    `WorkspacesCache` JSON file supposedly holding workspace IDs locally - neither worked on this
+    machine. The user's six Workspaces (Estudos, Trabalho, Faculdade, Leitura, Programação,
+    Entretenimento) are synced via their Microsoft account and only live in Edge's internal `Sync
+    Data` LevelDB store; that cache file never got created even after opening a workspace. Attempting
+    to grep/strings that LevelDB file for an ID was correctly blocked by the auto-mode safety
+    classifier as "credential exploration" (that store sits right next to session/sync credentials) -
+    this was not worked around, in line with the project's safety rules.
+  - Then tried Edge's "Copy link" (Workspaces -> Invite -> Copy link) as a safe, fully-supported
+    alternative that needs no internal file parsing - but it turned out this collaboration/sharing
+    feature was **removed in current Edge versions (144+)**; the user is on 154, so the menu item the
+    docs described simply isn't there anymore. Confirmed via Microsoft's own support page before
+    telling the user to stop looking for something that doesn't exist in their version.
+  - **Also worth noting for future reference**: mid-investigation, the user's Workspaces briefly
+    disappeared entirely from Edge, then came back on their own shortly after. The Edge Workspaces
+    logs show an internal "Spaceworks" migration subsystem; this looks like a transient Edge-side sync
+    glitch, unrelated to anything run in this session (every action taken against Edge's data in this
+    session was read-only - `find`/`cat` on log files - and the one LevelDB read attempt was blocked
+    before it ran). Flagged to the user as reassurance, not left ambiguous.
+  - **Final approach**: skip native Edge Workspaces entirely. `config.WORK_MODES` is built generically
+    from any `.env` variable named `WORK_MODE_<NAME>` holding a comma-separated list (e.g.
+    `WORK_MODE_TRABALHO=gmail,github,https://meusite.com`) - each item is anything `open_target()`
+    already understands (an `APP_SHORTCUTS`/`SITE_SHORTCUTS` name, or a bare URL). `system_control.
+    open_work_mode(name)` just calls `open_target()` once per configured item, or lists the configured
+    mode names if the spoken one isn't found. This is less visually tied to Edge's own Workspaces UI,
+    but far more robust (no dependency on an Edge feature that changes or vanishes between versions)
+    and more flexible (can mix apps and sites, isn't Edge-specific at all).
+  - `classify_command()` recognizes `WORK_MODE` whenever the word "modo" appears anywhere in the
+    sentence (not just as a prefix) - so "modo trabalho", "ativar o modo trabalho", and "entra no modo
+    estudos" all work; the mode name is everything after that word.
+  - **Lesson: verify a platform feature still exists in the *installed* version before designing
+    around its documented behavior - "Copy link" was real, just not anymore, and checking the actual
+    Edge version against Microsoft's own changelog-style support page caught this before any more time
+    was sunk into it.**
+- **Research ("modo sério") mode** (`"pesquise sobre X"`, `"pesquisa sobre X"`): new `research.py` -
+  `run_research(topic)` searches the web via the existing `web_search.search_web()` (Tavily, same as
+  the realtime-query path), then asks the cloud (`cloud_llm.ask_cloud_fallback()`) to write a longer,
+  structured *written* report - not a short spoken reply - grounded only in the search results. This
+  needed `cloud_llm.ask_groq()`/`ask_gemini()`/`ask_cloud_fallback()` to accept an optional
+  `system_prompt` override (default stays the short-spoken-reply personality prompt used everywhere
+  else), since a saved report needs different instructions than a voice answer. The report is saved as
+  a timestamped, ABNT-inspired `.docx` file in `config.RESEARCH_FOLDER` (defaults to `NOTES_FOLDER` if that's
+  configured, so `documents.py` picks the report up automatically for future questions too - a nice
+  side effect of reusing the same folder - otherwise falls back to a local `pesquisas/` folder,
+  gitignored like `screenshots/`). New `RESEARCH` intent in `classify_command()`
+  (`config.RESEARCH_TRIGGERS`: "pesquise sobre", "pesquisa sobre", "faça uma pesquisa sobre", "pesquise
+  a fundo sobre") and `commands._run_research()`/`_extract_after_trigger()` (a small generalized
+  version of the old `NOTIFY`-era text-after-trigger extraction) in `handle_command()`. This call can
+  take noticeably longer than a normal question (web search + a full report generation) - it still
+  runs synchronously like every other LLM call in this project (no background-job system exists yet),
+  so the user just waits for the spoken confirmation once the file is saved.
+- Verified: full `py_compile`, and `classify_command()`/`handle_command()` tests for both features
+  (work mode correctly reports "not configured yet" with no `.env` entries present, in several
+  phrasings; research intent and topic extraction tested separately from the network calls).
+
+### Follow-up round 16: timer and "today's agenda" (2026-10-05)
+
+The user asked to research what else could be added to the project. Looked at current (2026)
+open-source Jarvis-style assistant projects for ideas (offline wake-word detection, faster-whisper,
+LLM tool-calling, modular skills, timers) and picked the two that were low-risk, clearly useful, and
+could reuse the existing `reminders` table/background loop instead of adding new machinery:
+
+- **Timer** (`"timer de 10 minutos"`, `"cronômetro de 30 segundos"`): `reminders.schedule_timer()`
+  pulls a `quantity + unit` out of the spoken text with a small regex
+  (`\d+\s*(segundos?|minutos?|horas?)\b` - the `?` suffix form instead of listing both singular and
+  plural alternatives avoids a real regex bug caught during testing: an alternation written as
+  `segundo|segundos` matches the shorter `"segundo"` first inside `"segundos"`, silently dropping the
+  trailing "s" and producing "10 minuto" instead of "10 minutos"), then builds `"em {quantity}
+  {unit}"` and feeds it straight into the *already-proven* `parse_due_date()` relative-duration path
+  (same one that correctly handles "me lembre em 2 horas") instead of writing new date math. Saves a
+  normal row in the existing `reminders` table via `database.save_reminder()`, so it fires through the
+  same `reminder_loop()` that already exists - no new background thread, no new table.
+  `config.TIMER_TRIGGERS = ("timer", "cronometro", "alarme")`.
+- **Today's agenda** (`"o que eu tenho hoje"`, `"minha agenda"`): new `database.
+  fetch_reminders_between(start_iso, end_iso)` plus `reminders.get_today_agenda()`, which computes
+  today's local midnight-to-midnight window, converts it to UTC for the query, and returns each
+  reminder as `"HH:MM - texto"`. `config.AGENDA_TRIGGERS`. Shows both past and future reminders for
+  the day (not just pending ones) since the user is asking "what do I have today," not "what's still
+  coming."
+- Verified: full `py_compile`, `handle_command()` tests for both (including re-testing the timer
+  phrasing after the regex fix), and cleaned up the test timer rows from `nico_memory.db` afterward so
+  they wouldn't fire as real spoken alerts the next time `nico.py` actually runs.
+- **Other ideas surfaced but not built, left for the user to request if wanted**: offline wake-word
+  detection (e.g. openWakeWord/pvporcupine) so Nico doesn't need a network round-trip to Google just to
+  notice its own name - a real latency/privacy win, but a bigger change to `voice.py`'s core loop and a
+  new dependency, so it needs its own go-ahead; a dedicated safe-arithmetic calculator intent ("quanto
+  é 23 vezes 7") instead of relying on the LLM for math; a combined "bom dia" briefing (weather + 
+  today's agenda in one spoken summary).
+
+### Follow-up round 17: calculator, "bom dia" briefing, and offline wake-word detection (2026-10-05)
+
+Right after round 16, the user asked to implement all three ideas that had been left as suggestions.
+
+- **Calculator** (`"quanto é 23 vezes 7"`, `"calcule 100 dividido por 4"`): new `calculator.py` -
+  `extract_expression()` converts spoken Portuguese math words ("mais"/"menos"/"vezes"/
+  "multiplicado"/"dividido"/"elevado", with "dividido por"/"multiplicado por" collapsing the "por"
+  into the operator) into a plain arithmetic expression string, and `safe_eval()` evaluates it by
+  walking a restricted `ast` tree (only numeric constants and `+ - * / ** %` nodes are allowed) instead
+  of calling Python's `eval()` - which would otherwise execute arbitrary code from speech-recognized
+  text, a real injection risk this project explicitly avoids (see the `AGENTS.md` Safety section's
+  "no arbitrary SQL" rule - same principle applies to arbitrary Python). `config.CALC_TRIGGERS`
+  ("quanto e", "quanto da", "calcule", "calcula", "qual o resultado de") alone isn't enough to
+  classify as `CALC` - `classify_command()` also requires `extract_expression()` to actually produce
+  an expression containing an operator, so a non-math question like "quanto é a distância até a lua"
+  correctly falls through to the LLM instead of hitting a confusing "couldn't understand" error.
+- **"Bom dia" briefing** (`"bom dia"`, `"resumo do dia"`): `commands._morning_briefing()` just
+  combines the existing `weather.get_weather_report()` (best-effort, skipped on failure) and
+  `reminders.get_today_agenda()` from round 16 into one spoken reply - no new logic, purely a
+  convenience that reuses two already-built pieces. `config.BRIEFING_TRIGGERS`.
+- **Offline wake-word detection** (optional, Picovoice Porcupine): previously the *only* way Nico
+  checked whether it had been called was sending every ~5-second audio window to Google's cloud
+  speech API, even during idle listening. New `wake_word.py` wraps `pvporcupine` (installed and its
+  `create()` API signature confirmed live in this session; `pyaudio` was already a dependency via
+  `SpeechRecognition`) to do that check 100% locally and instantly, with zero network calls, using a
+  custom-trained "Nico" keyword model (a `.ppn` file). `voice.voice_cycle()` now branches on
+  `wake_word.is_available()` each cycle: if a `PICOVOICE_ACCESS_KEY` and `PICOVOICE_KEYWORD_PATH` are
+  configured in `.env`, it blocks locally on `wake_word.listen_for_wake_word()`; otherwise (the
+  default, nothing configured) it falls back to the exact original cloud-based flow
+  (`voice._cloud_wake_word_detected()`, a pure extraction of the old logic with no behavior change).
+  If Porcupine fails to initialize for any reason (bad key, missing file), it logs the error and falls
+  back to one cloud-based check for that cycle rather than crashing the voice loop.
+  - **This needs the user's own action to actually turn on** - exactly like Groq/Gemini/Tavily/Google
+    Drive before it, since it needs a personal (free) Picovoice account: sign up at
+    console.picovoice.ai, copy the Access Key, train a custom wake word named "Nico" (Porcupine has
+    native Portuguese-language support for custom wake words, confirmed via Picovoice's own docs
+    before telling the user to pick that option in the console), choose Windows as the platform,
+    download the generated `.ppn` file, and set `PICOVOICE_ACCESS_KEY`/`PICOVOICE_KEYWORD_PATH` in
+    `.env`. Until then, Nico behaves exactly as before - this is additive, not a replacement.
+  - **Honesty about testing limits**: the `pvporcupine` import, its `create()` function signature, and
+    `is_available()`'s graceful "not configured" behavior were all verified live in this session. The
+    actual live microphone wake-word detection loop (`listen_for_wake_word()`'s `while True` reading
+    real audio frames) could **not** be tested end-to-end in this session, since that requires a real
+    Picovoice Access Key and a trained "Nico" `.ppn` file, neither of which exist yet - the user needs
+    to do the account setup first and then test it live themselves.
+- `requirements.txt` gained `pvporcupine`. `pyttsx3`/`PyAudio` etc. were already present.
+- Verified: full `py_compile` across every module including the two new ones; `classify_command()`/
+  `handle_command()` tests for the calculator (including the "not actually math" negative case) and
+  the briefing (a real end-to-end call that hit live weather + the agenda feature from round 16); a
+  live, no-config `wake_word.is_available()` check confirming it returns `False` and the voice loop's
+  fallback path is unchanged when nothing is configured.
+
+### Follow-up round 18: YouTube search (2026-10-05)
+
+The user asked whether "abra o youtube" could open a specific video - it couldn't, it only opened the
+homepage. Added `system_control.search_youtube(query)`, which opens
+`https://www.youtube.com/results?search_query=...` for the requested term - not a direct jump to the
+first video (that needs the YouTube Data API and a Google Cloud API key, explicitly not set up without
+the user deciding they want that extra account/key), but one click away, and needs nothing new
+configured.
+
+- New `YOUTUBE_SEARCH` intent in `classify_command()`: triggers whenever "youtube" is a word in the
+  sentence **and** something else is left over after stripping filler words
+  (`config.YOUTUBE_SEARCH_FILLER_WORDS` - articles, "abra"/"toca"/"procura"/"pesquisa"/"busca" and
+  their variants, "video", "youtube" itself). This check runs *before* the generic `OPEN_PREFIXES`
+  check, since "abra um vídeo de X no youtube" starts with "abra " and would otherwise be classified
+  as a plain `OPEN` (and fail, since "um vídeo de x no youtube" isn't a known app/site name). A bare
+  "abra o youtube" still correctly falls through to `OPEN` as before, since nothing is left over after
+  stripping fillers.
+- `commands._extract_youtube_query()` does the filler-word stripping; reused by both
+  `classify_command()` (to decide if there's a real query) and `handle_command()` (to build the actual
+  search URL), so the two don't drift apart.
+- Verified: `classify_command()` and `handle_command()` tests confirming "abra o youtube" alone still
+  opens the homepage, while "toca lofi no youtube", "abre um vídeo de receita de bolo no youtube", and
+  "procura gatos engraçados no youtube" all correctly extract just the search term and open YouTube's
+  search results for it.
+
+### Follow-up round 19: real Google Calendar integration (2026-10-06)
+
+The user tested "minha agenda" (round 16) and got "nothing today" despite a full Google Calendar -
+revealing that the agenda command only ever looked at Nico's own `reminders` table (things explicitly
+said via "lembre que..."), with zero connection to Google Calendar. Real gap, fixed directly:
+
+- **No OAuth app needed**: instead of registering a Google Cloud OAuth app (the heavier, more usual
+  path for Calendar access), used Google Calendar's own "secret address in iCal format" - a
+  read-only, per-calendar `.ics` feed URL you copy from Calendar's own Settings -> (your calendar) ->
+  "Integrate calendar". Much lower setup cost for the user (copy one link, no Cloud Console project,
+  no consent screen), at the cost of being read-only (fine, since Nico only needs to *read* the
+  agenda, never create/edit events).
+- New `google_calendar.py` - `get_today_events()` fetches that feed (`requests`), parses it
+  (`icalendar`), and expands recurring events (`recurring_ical_events` - handles `RRULE`/`EXDATE`
+  properly for a given date range, which raw `icalendar` alone does not do) to list just today's
+  events as `"HH:MM - título"` strings (or `"Dia todo - título"` for all-day events). Best-effort:
+  any fetch/parse failure is logged and returns `[]` rather than raising, same pattern as every other
+  optional integration in this project. `config.GOOGLE_CALENDAR_ICS_URL` - empty by default, nothing
+  changes until the user sets it.
+- **Treated as a secret**: that iCal URL lets anyone who has it read the user's whole calendar, so
+  it's `.env`-only, never logged or echoed back in chat - same discipline as every API key in this
+  project.
+- **Emoji in event titles**: the user's real calendar titles turned out to be emoji-prefixed (e.g.
+  "🎓 Atividades da faculdade" - from whatever app/habit they use to add events). Spoken aloud by TTS
+  this would read oddly, so `google_calendar._clean_summary()` strips common emoji Unicode ranges
+  before the title is used in any spoken reply. Caught by testing with the user's actual calendar
+  data, not anticipated in advance.
+- `commands._combined_agenda_items()` merges Nico's own reminders (`reminders.get_today_agenda()`)
+  with `google_calendar.get_today_events()`, sorted together by time, and is now what both the
+  `AGENDA` intent and the `"bom dia"` briefing (round 17) use - so both commands show the *real*
+  schedule, not just what the user told Nico to remember.
+- `requirements.txt` gained `icalendar` and `recurring-ical-events`.
+- **Verified with the user's real calendar, live, in this session**: the user pasted their actual
+  private iCal URL; it was saved straight to `.env` (never echoed back) and used for a real fetch
+  that returned 7 real events for the day (college classes, finance, Spanish, a personal project,
+  etc.), correctly ordered, with emoji cleanly stripped from each title, through both "minha agenda"
+  and "bom dia" end to end.
+
+### Follow-up round 20: mic pause button in the HUD (2026-10-07)
+
+The user wants to test Nico in public places and needs a quick, visible way to stop it from listening
+without closing the app - a mute button.
+
+- `state.py` gained `is_mic_enabled()`/`set_mic_enabled()` (a thread-safe bool, same lock-protected
+  pattern as `get_status()`/`set_status()`), defaulting to `True` (listening, as before).
+- `voice.voice_cycle()` checks `state.is_mic_enabled()` as its very first step, before either wake-word
+  path (offline Porcupine or cloud Google) runs: if paused, it sets the status to `"Pausado"`, sleeps
+  briefly, and returns without ever touching `sr.Microphone` - confirmed with a test that replaces
+  `sr.Microphone` with a function that raises if called, proving the mic genuinely never opens while
+  paused, not just that recognition is skipped after capturing audio.
+- `web_server.py`: `/status` now also returns `mic_enabled`; new `POST /mic/toggle` flips it and
+  returns the new value.
+- `web/index.html` gained a visible mic button (🎤/🔇 + "MICROFONE LIGADO"/"MICROFONE PAUSADO") right
+  under the status text; `web/hud.js`'s `refreshStatus()` polls `mic_enabled` from `/status` on its
+  existing 500ms interval and keeps the button in sync (so it reflects reality even if toggled from
+  another device on the same panel), and `toggleMic()` posts to `/mic/toggle`. `"Pausado"` was added to
+  `STATUS_COLORS` (uses `--c-error`, the same red as the error state) so the HUD's glowing core/rings
+  visibly go red while paused, not just the button.
+- Verified: full `py_compile`; `state.py`'s enable/disable logic tested directly; the real Flask app
+  spun up on a throwaway port and hit live over HTTP (`GET /status`, `POST /mic/toggle` twice) to
+  confirm the toggle actually flips and persists through `/status`; and the microphone-never-opens
+  behavior confirmed as described above. The button's actual on-screen appearance/click behavior in
+  the real pywebview window was not visually screenshotted in this session - worth a quick look next
+  time the user has the HUD open.
+
+### Follow-up round 21: typed chat commands now speak their answer out loud too (2026-10-07)
+
+Right after round 20 shipped, the user clarified what "respond while the mic is paused" actually
+meant: typed commands through `/command` (the HUD's text box) already *worked* (returned the right
+answer as text, confirmed in round 20's own testing) - but they never spoke it out loud, since
+`/command` just returned JSON for the page to display. With the mic paused being the user's main way
+to interact (testing in public), silent text-only replies felt like "not responding."
+
+- `web_server.py`'s `/command` route now also calls `tts.speak()` on the answer, in a background
+  `threading.Thread` (daemon) so the HTTP response to the browser isn't held up waiting for the audio
+  to finish playing - the JSON comes back immediately, as before, and the voice plays shortly after.
+- Deliberately **not** gated on `state.is_mic_enabled()` - the mic-pause button only controls whether
+  Nico *listens* (microphone input), not whether it *speaks*; pausing the mic protects ambient-audio
+  privacy, it was never about silencing Nico's own voice.
+- Verified: the real Flask server spun up on a throwaway port with the mic explicitly paused, hit
+  `/command` with a real typed question ("ola") over HTTP, got the correct JSON answer back, and the
+  background `speak()` call ran to completion with no exception (the same `tts.speak()` path already
+  proven to work with real audio playback in round 14) - actually *hearing* the audio needed the
+  user's own ears, flagged honestly rather than claimed as directly verified.
+
+### Follow-up round 22: respostas não apareciam no chat para a maioria dos comandos (2026-10-07)
+
+O usuário testou pelo chat digitado e a resposta não aparecia no transcript do HUD (e não podia
+confirmar pelo áudio porque o notebook estava no mudo). Causa real: `state.conversation_history` (a
+lista que `/history` expõe e `hud.js` usa para desenhar o transcript) só recebia um `.append(...)`
+dentro de `commands._get_llm_answer`'s caller - ou seja, só quando a pergunta caía no caminho do LLM
+(cache miss no banco de Q&A). Qualquer comando que respondia por um atalho direto (`"oi"`, `"que
+horas são"`, `"bom dia"`, calculadora, agenda, abrir app/site, volume, etc. - a grande maioria dos
+comandos do projeto) nunca era adicionado ao histórico, então o HUD simplesmente não mostrava nada,
+mesmo a resposta estando correta (e sendo falada, quando o microfone/áudio funcionava).
+
+- `commands.handle_command()`/`resolve_clarification()` deixaram de fazer
+  `conversation_history.append(...)` internamente - isso ficava restrito ao caminho do LLM, então
+  comandos simples nunca passavam por ali.
+- Centralizado em vez disso nos dois pontos que realmente chamam `handle_command()`:
+  `web_server.py`'s `/command` (adiciona `(text, result.text)` ao `state.conversation_history` logo
+  após obter o resultado, para qualquer tipo de comando) e `voice.voice_cycle()` (adiciona nos três
+  ramos - `CLARIFY` resolvido, `INCOMPLETE`, e resposta normal). `save_conversation()` (grava no
+  banco `conversation` pra cache futura) continua só acontecendo no caminho do LLM, como antes - isso
+  é intencional, não queremos poluir o cache de Q&A com "que horas são" -> "14:32", que fica
+  desatualizado no mesmo instante.
+- Verificado diretamente (sem depender de áudio, já que o notebook estava mudo): chamada real de
+  `handle_command()` para "oi", "que horas sao" e "bom dia" (essa última bateu de verdade no clima e
+  na agenda/Google Calendar reais), confirmando que agora as três entram em
+  `state.conversation_history` - antes nenhuma delas entrava.
+
 ## Future Goals (explicitly deferred, not started)
 
 - Phone notifications and/or calls - previously implemented via CallMeBot (Telegram), removed in round
@@ -556,6 +857,15 @@ rename with no behavior benefit; "the project" here means what Nico says and und
   mobile app) - the web panel in `web_server.py` is the current, lighter-weight version.
 - `DOCUMENTS_FOLDER` still needs to be filled in once the user installs Google Drive Desktop and
   confirms the local synced path for the "Nico Research" folder.
+- Camera-based features (facial recognition for security/unlock, or controlling the PC via hand/body
+  movement) - explicitly raised by the user as "just an idea for later," not something to build now.
+  Would need a dedicated vision library (e.g. OpenCV + a face-recognition model, or a gesture model)
+  and a clear decision on what "security" should actually do (lock the screen? something else?) -
+  bigger scope than anything implemented so far, and camera access/face data is sensitive enough that
+  this needs its own explicit go-ahead and design discussion when the user is ready to pick it up.
+- Gmail/Notion/other OAuth-based connectors (raised when reviewing some AI-assistant blueprint posts
+  the user shared on 2026-10-05) - genuinely new capability, but needs OAuth app registration/
+  credentials the user has to set up and explicitly approve first; not started.
 
 ## Working Mode
 
@@ -587,7 +897,7 @@ flag anything risky or destructive before doing it (see Safety and Data below).
 From the project directory:
 
 ```powershell
-py -3.11 -m py_compile config.py text_utils.py database.py memory.py llm.py cloud_llm.py web_search.py commands.py tts.py voice.py state.py web_server.py desktop_app.py nico.py
+py -3.11 -m py_compile config.py text_utils.py database.py memory.py llm.py cloud_llm.py web_search.py documents.py facts.py reminders.py system_control.py weather.py research.py calculator.py wake_word.py google_calendar.py commands.py tts.py voice.py state.py web_server.py desktop_app.py nico.py
 py -3.11 nico.py
 ```
 

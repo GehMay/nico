@@ -32,10 +32,24 @@
     letter-spacing: 0.3em;
     font-size: 0.95em;
     color: var(--accent);
-    margin-bottom: 20px;
+    margin-bottom: 14px;
     min-height: 1.4em;
     text-transform: uppercase;
   }
+
+  #mic-toggle {
+    margin-bottom: 20px;
+    background: linear-gradient(135deg, var(--c-listening), var(--accent-2));
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #mic-toggle.paused {
+    background: var(--panel);
+    border: 1px solid var(--c-error);
+    color: var(--c-error);
+  }
+  #mic-icon { font-size: 1.1em; }
 
   #transcript {
     width: min(560px, 92vw);
@@ -69,6 +83,11 @@
   </div>
 
   <div id="status-text">INICIANDO</div>
+
+  <button id="mic-toggle" onclick="toggleMic()">
+    <span id="mic-icon">🎤</span>
+    <span id="mic-label">MICROFONE LIGADO</span>
+  </button>
 
   <div id="transcript" class="panel"></div>
 

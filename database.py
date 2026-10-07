@@ -87,6 +87,17 @@ def fetch_due_reminders(now_iso):
     return rows
 
 
+def fetch_reminders_between(start_iso, end_iso):
+    connection = open_database()
+    cursor = connection.execute(
+        "SELECT reminder_text, due_at FROM reminders WHERE due_at >= ? AND due_at < ? ORDER BY due_at",
+        (start_iso, end_iso)
+    )
+    rows = cursor.fetchall()
+    connection.close()
+    return rows
+
+
 def mark_reminder_notified(reminder_id):
     connection = open_database()
     connection.execute(
