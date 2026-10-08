@@ -68,9 +68,10 @@ The project is split into modules (entry point is still `nico.py`):
   (see "Follow-up round 9" below), `open_work_mode()` (see "Follow-up round 15" below).
 - `weather.py` - `get_weather_report()`: free weather via Open-Meteo, no API key (see "Follow-up
   round 9" below).
-- `research.py` - `run_research()`: "modo sério" ("pesquise sobre X") - searches the web (Tavily),
+- `research.py` - `run_research(topic, wanted, excluded)`: "modo pesquisa" - requires the topic,
+  desired focus, and exclusions before searching the web (Tavily),
   asks the cloud (Groq/Gemini) to write a longer written report (not a short spoken reply), and
-  saves an ABNT-inspired, timestamped `.docx` with numbered source references to
+  saves an ABNT-inspired, timestamped `.pdf` with numbered source references to
   `config.RESEARCH_FOLDER` (see "Follow-up round 15" below).
 - `calculator.py` - `calculate_spoken()`/`extract_expression()`: a safe (AST-based, no `eval()`)
   arithmetic calculator for spoken math like "quanto é 23 vezes 7" (see "Follow-up round 17" below).
@@ -220,9 +221,9 @@ Drive, and Nico just reads what's already there (not Claude acting as Nico's liv
 - Added a second folder, `NOTES_FOLDER` (`G:\Meu Drive\Nico Notes`), for the user's own manual notes -
   `config.DOCUMENT_FOLDERS` is now a list combining both, and `documents.py` scans all of them. An
   `exemplo.txt` was left in `Nico Notes` showing the expected format (blank-line-separated sections).
-- `documents.py` now also reads `.docx` files (via `python-docx`), not just `.txt`/`.md` - paragraphs
-  between blank lines become sections, same as the text-file case. No folder is pointed at `.docx`
-  content yet (e.g. the user's "Cursos" folder) - that's opt-in, add it to `.env` as a third
+- `documents.py` reads `.txt`, `.md`, `.docx` (via `python-docx`), and `.pdf` (via `pypdf`) from
+  configured document folders. PDF pages are extracted as searchable text. No folder is pointed at
+  `.docx` content yet (e.g. the user's "Cursos" folder) - that's opt-in, add it to `.env` as a third
   `DOCUMENT_FOLDERS` entry if wanted.
 - `web/memory.html` + new `web/starfield.js`: replaced the static CSS-dot background on the memory
   galaxy page with a real animated starfield (tsParticles, free CDN), layered behind the vis-network
@@ -842,6 +843,17 @@ mesmo a resposta estando correta (e sendo falada, quando o microfone/áudio func
   `handle_command()` para "oi", "que horas sao" e "bom dia" (essa última bateu de verdade no clima e
   na agenda/Google Calendar reais), confirmando que agora as três entram em
   `state.conversation_history` - antes nenhuma delas entrava.
+
+### Follow-up round 23: pesquisa com objetivo e exclusões obrigatórios
+
+- O modo Pesquisa aceita o formato `Modo Pesquisa <tema>, <o que quero>, <o que não quero>`.
+  Os três campos são obrigatórios; se faltar algum, `commands.py` pergunta pelo campo e mantém o
+  pedido pendente em `state.py`, funcionando tanto pela voz quanto pelo HUD. O usuário pode cancelar
+  com "cancelar pesquisa".
+- `research.py` inclui o objetivo na consulta Tavily e passa objetivo e exclusões ao prompt de
+  síntese. Se as fontes não sustentarem os critérios, o relatório deve declarar essa limitação,
+  sem preencher com conteúdo fora do escopo. `run_research()` também valida os campos antes de
+  iniciar a busca.
 
 ## Future Goals (explicitly deferred, not started)
 

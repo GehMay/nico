@@ -13,6 +13,9 @@ PYTHON / NICO
 py -3.11 --version
 Mostra a versão do Python 3.11 que será usada.
 
+py -3.11 -m pip install -r requirements.txt
+Instala ou atualiza as dependências listadas do Nico, incluindo geração/leitura de PDF.
+
 py -3.11 -m py_compile config.py text_utils.py database.py memory.py llm.py cloud_llm.py web_search.py documents.py facts.py reminders.py system_control.py weather.py research.py calculator.py wake_word.py google_calendar.py commands.py tts.py voice.py state.py web_server.py desktop_app.py nico.py
 Verifica erros de sintaxe em todos os módulos do projeto. Não inicia o Nico e não testa microfone, Ollama, Google Calendar ou o banco.
 
@@ -60,6 +63,8 @@ BANCO SQLITE
 
 O banco local do Nico chama-se nico_memory.db e é criado pelo próprio programa. O arquivo está listado no .gitignore para não ser enviado ao Git.
 
+Esse banco guarda conversas, fatos e lembretes. Ele é diferente do Codebase Memory, que mantém um grafo de arquivos, funções e relações do código para ferramentas de programação.
+
 Para visualizar o banco, abra o DB Browser for SQLite pelo menu Iniciar, selecione nico_memory.db e use a aba Browse Data para escolher a tabela conversation. É melhor fechar o Nico antes de abrir ou editar o banco no DB Browser, para evitar bloqueio do arquivo.
 
 DOCUMENTAÇÃO E PESQUISA
@@ -68,8 +73,8 @@ DOCUMENTAÇÃO E PESQUISA
 Fale: "Abra a documentação do Python" (também funciona com JavaScript, TypeScript, Flask, Django, SQLite e Ollama).
 Nico abre a página oficial conhecida no navegador padrão do Windows (Edge, se ele for o navegador padrão). Para outros assuntos, abre uma busca por documentação oficial; confira o domínio antes de confiar no resultado.
 
-Fale: "Pesquise sobre <assunto>".
-Nico pesquisa com Tavily, redige um relatório e salva um arquivo Word .docx em Nico Notes (G:\Meu Drive\Nico Notes, se NOTES_FOLDER estiver configurada). O documento tem estrutura e apresentação inspiradas na ABNT, com resumo, palavras-chave, seções, margens A4 e referências numeradas a partir das fontes retornadas. É um formato para leitura; não garante conformidade acadêmica completa quando as fontes não fornecem autor ou data de publicação.
+Fale ou escreva: "Modo Pesquisa <tema>, <o que quero>, <o que não quero>".
+Exemplo: "Modo Pesquisa empreendedorismo jovem, exemplos de startups brasileiras e dados recentes, não quero frases motivacionais nem conteúdo sobre grandes empresas". Os três campos são obrigatórios. Se algum faltar, Nico pergunta antes de pesquisar; responda os campos pendentes separados por vírgulas. A pesquisa considera o objetivo e evita o conteúdo excluído. O relatório PDF é salvo em Nico Notes (G:\Meu Drive\Nico Notes, se NOTES_FOLDER estiver configurada), com estrutura e apresentação inspiradas na ABNT e referências numeradas a partir das fontes retornadas. Para cancelar enquanto Nico aguarda os campos, diga ou escreva "cancelar pesquisa".
 
 CODEBASE MEMORY MCP
 -------------------
@@ -81,7 +86,9 @@ Cria uma variável temporária do PowerShell apontando para o executável do MCP
 Lista os projetos indexados pelo MCP.
 
 & "$env:LOCALAPPDATA\Programs\codebase-memory-mcp\codebase-memory-mcp.exe" cli --progress index_repository --repo-path "C:\Users\usuario\OneDrive\Área de Trabalho\Nico"
-Indexa ou atualiza o grafo de código deste projeto. Não inclui o banco nico_memory.db.
+Cria ou atualiza o índice separado do projeto Nico. Não inclui o banco nico_memory.db e não altera nem apaga o índice Projeto4.
+
+Não use delete_project para “limpar menções ao Nico” dentro de Projeto4: esse comando apaga o índice inteiro daquele projeto, não itens selecionados.
 
 & "$env:LOCALAPPDATA\Programs\codebase-memory-mcp\codebase-memory-mcp.exe" --ui=true --port=9749
 Inicia a interface visual do grafo de código. Mantenha o terminal/processo aberto enquanto usa a interface. Depois abra este endereço no navegador:

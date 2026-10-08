@@ -11,6 +11,7 @@ import pygame
 import pyttsx3
 
 from config import NEURAL_VOICE, TTS_CACHE_DIR, USE_NEURAL_VOICE, USE_TTS_CACHE, VOICE_INDEX
+import state
 
 _mixer_ready = False
 
@@ -86,12 +87,14 @@ def _speak_local(text):
 
 def speak(text, set_status):
     set_status("Falando")
+    try:
+        if USE_NEURAL_VOICE:
+            try:
+                _speak_neural(text)
+                return
+            except Exception as error:
+                print("Neural voice unavailable, falling back to local voice:", error)
 
-    if USE_NEURAL_VOICE:
-        try:
-            _speak_neural(text)
-            return
-        except Exception as error:
-            print("Neural voice unavailable, falling back to local voice:", error)
-
-    _speak_local(text)
+        _speak_local(text)
+    finally:
+        set_status("Pensando" if state.is_mic_enabled() else "Pausado")

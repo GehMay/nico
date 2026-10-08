@@ -37,7 +37,7 @@ from llm import ask_ollama, build_context_prompt, get_current_time
 from memory import find_conversation
 from reminders import get_today_agenda, maybe_schedule_reminder, schedule_timer
 from research import run_research
-from state import set_status
+from state import get_pending_research, set_pending_research, set_status
 from system_control import (
     get_battery_status,
     open_documentation,
@@ -172,6 +172,18 @@ def handle_command(command_text, conversation_history):
     core_text, was_question = strip_request_wrapper(command_text)
     command_type = classify_command(core_text)
 
+    if command_type == "RESEARCH":
+        return _continue_or_run_research(_parse_research_fields(core_text), was_question)
+
+    pending_research = get_pending_research()
+    if pending_research:
+        if normalize_text(core_text) in {"cancela pesquisa", "cancelar pesquisa", "cancela", "cancelar"}:
+            set_pending_research(None)
+            return CommandResult("ANSWER", "Pesquisa cancelada.")
+        return _continue_or_run_research(
+            _parse_research_fields(core_text, pending_research), was_question
+        )
+
     if command_type == "TIME":
         return CommandResult("ANSWER", f"Agora são {get_current_time()}.")
 
@@ -226,12 +238,6 @@ def handle_command(command_text, conversation_history):
                 "ANSWER", f"Entendido, vou me lembrar disso - e aviso você {reminder_time}."
             )
         return CommandResult("ANSWER", "Entendido, vou me lembrar disso.")
-
-    if command_type == "RESEARCH":
-        topic = _extract_after_trigger(core_text, RESEARCH_TRIGGERS)
-        if not topic:
-            return CommandResult("ANSWER", "Sobre qual tópico você quer que eu pesquise?")
-        return CommandResult("ANSWER", _affirm(_run_research(topic), was_question))
 
     if command_type == "OPEN_DOCUMENTATION":
         topic = _extract_after_trigger(core_text, OPEN_DOCUMENTATION_TRIGGERS)
@@ -333,6 +339,88 @@ def _extract_after_trigger(command_text, triggers):
     return ""
 
 
+def _parse_research_fields(text, existing=None):
+    fields = dict(existing or {"topic": "", "wanted": "", "excluded": ""})
+    normalized = normalize_text(text)
+    payload = text
+
+    for trigger in RESEARCH_TRIGGERS:
+        index = normalized.find(trigger)
+        if index >= 0:
+            payload = text[index + len(trigger):].strip(" ,:.-")
+            break
+
+    unlabeled_values = []
+    labels = (
+        ("topic", ("tema", "topico", "assunto")),
+        ("wanted", ("o que eu quero", "o que quero", "quero", "foco")),
+        ("excluded", ("o que eu nao quero", "o que nao quero", "nao quero", "excluir", "evitar")),
+    )
+
+    for part in (piece.strip().strip("[] ") for piece in payload.split(",")):
+        if not part:
+            continue
+
+        assigned = False
+        for field_name, aliases in labels:
+            for separator in (":", "="):
+                if separator in part:
+                    label, value = part.split(separator, 1)
+                    if normalize_text(label.strip()) in aliases:
+                        fields[field_name] = value.strip().strip("[] ")
+                        assigned = True
+                        break
+            if assigned:
+                break
+
+            normalized_part = normalize_text(part)
+            for alias in sorted(aliases, key=len, reverse=True):
+                if normalized_part.startswith(alias + " "):
+                    fields[field_name] = part[len(alias):].strip(" :[]=\t")
+                    assigned = True
+                    break
+            if assigned:
+                break
+
+        if not assigned:
+            unlabeled_values.append(part)
+
+    missing_fields = [name for name, value in fields.items() if not value]
+    for field_name, value in zip(missing_fields, unlabeled_values):
+        fields[field_name] = value.strip().strip("[] ")
+
+    return fields
+
+
+def _continue_or_run_research(request, was_question=False):
+    missing = [name for name, value in request.items() if not value]
+    if missing:
+        set_pending_research(request)
+        questions = {
+            "topic": "Qual é o tema da pesquisa?",
+            "wanted": "O que você quer que a pesquisa encontre ou priorize?",
+            "excluded": "O que você não quer que entre na pesquisa?",
+        }
+        if len(missing) == 1:
+            question = questions[missing[0]]
+        else:
+            labels = {
+                "topic": "o tema",
+                "wanted": "o que você quer que eu priorize",
+                "excluded": "o que você não quer que entre",
+            }
+            question = " e ".join(labels[name] for name in missing).capitalize() + "?"
+        return CommandResult(
+            "RESEARCH_CLARIFY",
+            f"Antes de pesquisar, preciso saber {question[0].lower() + question[1:]} "
+            "Responda os campos que faltam separados por vírgulas."
+        )
+
+    set_pending_research(None)
+    answer = _run_research(request["topic"], request["wanted"], request["excluded"])
+    return CommandResult("ANSWER", _affirm(answer, was_question))
+
+
 def _combined_agenda_items():
     """Junta os lembretes do Nico com os eventos de hoje do Google
     Calendar (se configurado - ver google_calendar.py), ordenados por
@@ -361,10 +449,10 @@ def _morning_briefing():
     return "Bom dia! " + " ".join(parts)
 
 
-def _run_research(topic):
+def _run_research(topic, wanted, excluded):
     set_status("Pesquisando")
     try:
-        path = run_research(topic)
+        path = run_research(topic, wanted, excluded)
         return f"Pesquisa concluída. Salvei o relatório em {path}."
     except Exception as error:
         print("Research failed:", error)

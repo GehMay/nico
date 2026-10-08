@@ -284,11 +284,14 @@ DOCUMENT_SCAN_LIMIT = 30  # olha só os N arquivos mais recentes de cada pasta
 # --- "Modo sério" (pesquisa de verdade e salva um relatório em arquivo) ----
 # "pesquise sobre X" / "pesquisa sobre X" faz o Nico buscar na web (Tavily)
 # e usar a nuvem (Groq/Gemini) pra escrever um relatório mais completo que
-# uma resposta falada normal, e salva isso num arquivo .docx inspirado na ABNT. Usa a mesma
-# pasta de anotações (NOTES_FOLDER) se configurada - assim os relatórios
+# uma resposta falada normal, e salva um PDF com apresentação inspirada na ABNT.
+# Usa a pasta de anotações (NOTES_FOLDER) quando configurada, mantendo os PDFs
 # também ficam disponíveis pro Nico reler depois (documents.py já escaneia
 # essa pasta) - ou uma pasta local própria se NOTES_FOLDER não existir.
-RESEARCH_TRIGGERS = ("pesquise sobre", "pesquisa sobre", "faca uma pesquisa sobre", "pesquise a fundo sobre")
+RESEARCH_TRIGGERS = (
+    "modo pesquisa", "pesquise sobre", "pesquisa sobre",
+    "faca uma pesquisa sobre", "pesquise a fundo sobre",
+)
 RESEARCH_FOLDER = NOTES_FOLDER or "pesquisas"
 RESEARCH_MAX_RESULTS = 6
 

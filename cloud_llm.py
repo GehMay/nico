@@ -14,6 +14,11 @@ GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_M
 
 SYSTEM_PROMPT = (
     NICO_PERSONALITY_PROMPT
+    + " Quando a pergunta for específica, priorize os critérios exatos do "
+    "pedido, incluindo o que deve estar presente, o que deve ser evitado e "
+    "qual nível de detalhe o usuário quer. Evite respostas genéricas, "
+    "amplas ou vagas quando houver uma demanda precisa. Se faltarem dados "
+    "cruciais, peça apenas o mínimo necessário antes de responder."
     + " Para respostas destinadas à fala, prefira poucas frases; desenvolva "
     "mais quando o usuário pedir detalhes ou quando a situação exigir clareza."
 )

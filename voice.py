@@ -67,7 +67,12 @@ def voice_cycle(conversation_history, set_status):
     if not state.is_mic_enabled():
         # Microfone pausado pelo botão do HUD - não abre o microfone nem
         # manda nada pra nuvem enquanto estiver assim.
-        set_status("Pausado")
+        active_statuses = {
+            "Pensando", "Falando", "Pesquisando", "Lendo documentos",
+            "Aguardando aprovação", "Executando ação",
+        }
+        if state.get_status() not in active_statuses:
+            set_status("Pausado")
         time.sleep(0.5)
         return
 
@@ -106,7 +111,22 @@ def voice_cycle(conversation_history, set_status):
         try:
             result = handle_command(command_text, conversation_history)
 
-            if result.kind == "CLARIFY":
+            if result.kind == "RESEARCH_CLARIFY":
+                while result.kind == "RESEARCH_CLARIFY":
+                    speak(result.text, set_status)
+                    try:
+                        reply_text = _listen_once(set_status, timeout=20)
+                    except (sr.WaitTimeoutError, sr.UnknownValueError, sr.RequestException):
+                        result = None
+                        break
+                    result = handle_command(reply_text, conversation_history)
+
+                if result is not None:
+                    print("Final answer:", repr(result.text))
+                    conversation_history.append((command_text, result.text))
+                    speak(result.text, set_status)
+
+            elif result.kind == "CLARIFY":
                 speak(result.text, set_status)
                 try:
                     reply_text = _listen_once(set_status, timeout=8)

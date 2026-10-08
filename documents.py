@@ -2,6 +2,7 @@ import glob
 import os
 
 import docx
+from pypdf import PdfReader
 
 from config import DOCUMENT_FOLDERS, DOCUMENT_MATCH_THRESHOLD, DOCUMENT_SCAN_LIMIT
 from memory import keyword_score
@@ -17,6 +18,7 @@ def _list_recent_files():
         paths = glob.glob(os.path.join(folder, "*.txt"))
         paths += glob.glob(os.path.join(folder, "*.md"))
         paths += glob.glob(os.path.join(folder, "*.docx"))
+        paths += glob.glob(os.path.join(folder, "*.pdf"))
         # Arquivos como "YYYY-MM-DD - ...txt" ficam ordenados por data ao
         # ordenar o nome; para anotações manuais sem data no nome, isso só
         # vira uma ordem alfabética, o que não é um problema aqui.
@@ -58,8 +60,20 @@ def _read_docx_sections(path):
 
 
 def _read_sections(path):
-    if path.lower().endswith(".docx"):
+    extension = os.path.splitext(path)[1].lower()
+    if extension == ".docx":
         return _read_docx_sections(path)
+    if extension == ".pdf":
+        try:
+            reader = PdfReader(path)
+            sections = []
+            for page in reader.pages:
+                text = (page.extract_text() or "").strip()
+                if text:
+                    sections.append(text)
+            return sections
+        except Exception:
+            return []
     return _read_text_sections(path)
 
 

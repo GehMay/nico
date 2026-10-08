@@ -33,6 +33,11 @@ def ask_ollama(prompt):
             "model": OLLAMA_MODEL,
             "prompt": (
                 f"{NICO_PERSONALITY_PROMPT}\n\n"
+                "Regras de resposta: se a pergunta for específica, responda com "
+                "foco em critérios, exclusões, contexto e restrições do pedido; "
+                "não generalize, não fale de forma ampla demais e não assuma "
+                "o que a pessoa não pediu. Se faltar dado importante, peça o "
+                "mínimo necessário antes de responder.\n\n"
                 "Se o usuário perguntar a hora atual, responda exatamente [TIME]. "
                 "Se o usuário disser olá ou perguntar como você está, responda "
                 "educadamente e de forma breve. "

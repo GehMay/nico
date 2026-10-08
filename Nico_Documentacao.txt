@@ -1,52 +1,47 @@
 ===================================================================
 DOCUMENTAÇÃO DO PROJETO NICO
 Assistente de voz local em português (Brasil) para Windows
-Atualizado em: 2026-10-07 (rodada 22: correção do histórico do chat no HUD)
+Atualizado em: 2026-10-07 (PDFs de pesquisa, documentação oficial e Codebase Memory separado)
 ===================================================================
 
-------------------------------------------------------------------
 1. VISÃO GERAL
-------------------------------------------------------------------
-Nico é um assistente de voz local, em português do Brasil, com uma
-personalidade calma, amigável e um pouco cavalheiresca - inspirada no
-Jarvis (do Tony Stark). Ele:
-- Escuta o microfone, espera uma "wake word" (palavra de ativação: nico e
-  variações mal reconhecidas como nicole, niko, nikko etc.).
-- Reconhece a fala via Google Speech Recognition (idioma pt-BR).
-- Classifica o comando entre dezenas de intenções fixas (hora, saudação,
-  humor, agradecimento, capacidades, identidade, calculadora, timer,
-  agenda/"bom dia", lembrar/lembrete, pesquisa, modo de trabalho, abrir
-  app/site, YouTube, volume, captura de tela, bateria, clima) ou,
-  se nada bater, conversa livre via LLM.
-- Para conversa livre: primeiro procura nos fatos que o usuário pediu
-  para lembrar, depois em documentos de pesquisa salvos localmente,
-  depois (se a pergunta parecer precisar de informação atual e houver
-  chave do Tavily) busca na web e pede pra nuvem responder, depois tenta
-  o modelo local Ollama (qwen2.5:1.5b), e por fim usa Groq/Gemini como
-  reforço de confiabilidade se o Ollama estiver fora do ar. Guarda a
-  resposta em um cache SQLite para perguntas parecidas no futuro.
-- Se o comando estiver claramente incompleto, pede para o usuário
-  completar o pensamento em vez de mandar para o LLM.
-- Se houver mais de uma memória parecida no cache (ambíguo), pergunta ao
-  usuário para esclarecer antes de responder.
-- Fala a resposta em voz alta com uma voz neural masculina em português
-  (edge-tts, "pt-BR-AntonioNeural"), com um fallback offline (pyttsx3)
-  se não houver internet.
-- Mostra tudo em um HUD (painel) estilo "Jarvis": núcleo pulsante,
-  anéis girando, transcript da conversa, e um botão para pausar o
-  microfone (útil para testar em lugares públicos sem ouvir o ambiente).
-  O mesmo painel é acessível de celular/tablet na mesma rede Wi-Fi.
+Nico é um assistente de voz local, em português do Brasil. Sua
+personalidade é calma, atenciosa, discreta, perspicaz e cordial, com humor
+leve quando couber. Ele adapta o tom à situação, admite incerteza, explica
+problemas com clareza e empatia, sem alegar sentimentos ou experiências
+humanas reais.
 
-Status do projeto (conforme AGENTS.md): FINALIZADO como base - todas as
-fases originalmente planejadas foram concluídas. Desde então, o projeto
-recebeu 22 rodadas de ajustes e novas funcionalidades pedidas pelo
-usuário após o uso real (ver seção 20, "HISTÓRICO RESUMIDO DAS RODADAS").
-Não há fase nova planejada; cada pedido novo é tratado como um item
-independente.
+Ele:
+- Escuta o microfone e espera pela wake word "Nico" e variações reconhecidas.
+- Reconhece a fala via Google Speech Recognition (pt-BR); Porcupine local é
+  opcional.
+- Classifica comandos fixos (hora, saudação, lembretes, agenda, pesquisa,
+  documentação, abrir apps/sites, volume, clima e outros) ou usa conversa
+  livre via LLM.
+- Para conversa livre, procura fatos lembrados e documentos locais antes de
+  consultar o Ollama; buscas atuais podem usar Tavily e Groq/Gemini.
+- Guarda perguntas e respostas no SQLite e pede esclarecimento quando a
+  memória encontra resultados ambíguos.
+- Gera relatórios de pesquisa em PDF A4 com estrutura inspirada na ABNT,
+  citações numéricas e referências baseadas nas fontes encontradas.
+- Lê arquivos .txt, .md, .docx e .pdf das pastas configuradas do Drive
+  sincronizado; o acesso é local e somente de leitura.
+- Abre documentação oficial de tecnologias conhecidas ou uma busca por
+  documentação oficial no navegador padrão.
+- Fala em português com edge-tts e mantém pyttsx3 como fallback offline.
+- Mostra um HUD com status e cores: pesquisa âmbar, leitura de documentos
+  verde-azulada, fala verde, pausa vermelha quando ocioso e erro vermelho.
+  A pausa do microfone não substitui a cor de uma tarefa ativa.
+- Permite abrir o mesmo painel em outro dispositivo da rede local.
 
-------------------------------------------------------------------
+O formato PDF é organizado para leitura e inspirado nas normas ABNT, mas
+não garante conformidade acadêmica completa quando os metadados das fontes
+não estão disponíveis.
+
+O índice Codebase Memory do Nico é separado do índice Projeto4. O banco
+nico_memory.db guarda conversas, fatos e lembretes; não é o grafo do código.
+
 2. ESTRUTURA DE ARQUIVOS (módulos atuais)
-------------------------------------------------------------------
   config.py          -> todas as constantes/configurações do projeto
                          (wake words, gatilhos de cada comando em
                          português, chaves de API via .env, etc.).
@@ -62,17 +57,18 @@ independente.
   cloud_llm.py         -> Groq (principal) + Gemini (reforço) como nuvem.
   web_search.py        -> busca real na web via Tavily.
   documents.py         -> lê documentos de pesquisa salvos localmente
-                         (.txt/.md/.docx) de pastas do Google Drive.
+                         (.txt/.md/.docx/.pdf) de pastas do Google Drive.
   facts.py             -> busca nos fatos que o usuário pediu para
                          lembrar (tabela facts).
   reminders.py         -> parsing de datas/horas em português
                          (dateparser + regex próprio), lembretes, timers
                          e a agenda de hoje.
   system_control.py    -> abrir apps/sites, volume, captura de tela,
-                         bateria, busca no YouTube, "modo de trabalho".
+                         bateria, busca no YouTube, "modo de trabalho",
+                         e documentação.
   weather.py            -> clima real via Open-Meteo (sem chave de API).
   research.py           -> "modo sério" ("pesquise sobre X"): busca na
-                         web + relatório escrito salvo em arquivo.
+                         web + relatório PDF A4 inspirado na ABNT.
   calculator.py         -> calculadora de voz segura (AST, sem eval()).
   wake_word.py           -> detecção de wake word 100% local (Picovoice
                          Porcupine), opcional.
@@ -118,8 +114,10 @@ Para rodar o projeto, o comando continua o mesmo:
   pygame                      -> reprodução do áudio gerado pelo edge-tts.
   flask                       -> servidor web local (HUD + painel).
   pywebview                   -> janela nativa do programa (via WebView2).
-  python-dotenv                -> lê as chaves de API do arquivo .env.
-  python-docx                  -> leitura de documentos .docx.
+  python-dotenv               -> lê as chaves de API do arquivo .env.
+  python-docx                 -> leitura de documentos .docx.
+  reportlab                   -> geração de relatórios PDF.
+  pypdf                       -> extração de texto de PDFs para a busca local.
   dateparser                   -> interpretação de datas/horas em
                                  linguagem natural (lembretes/timers).
   psutil                       -> status da bateria.
@@ -234,8 +232,9 @@ find_conversation(user_text) -> MemoryResult
 llm.py
   build_context_prompt(command_text, conversation_history) monta um
   prompt com as últimas trocas da sessão + a pergunta atual, com a
-  personalidade do Nico (calmo, amigável, cavalheiresco, responde em
-  português). ask_ollama(prompt) faz o POST pro Ollama local. get_current_
+  personalidade do Nico (atencioso, discreto, honesto sobre incerteza,
+  empático sem alegar sentimentos humanos, responde em português).
+  ask_ollama(prompt) faz o POST pro Ollama local. get_current_
   time() devolve a hora em formato 24h ("HH:MM").
 
 cloud_llm.py
@@ -320,12 +319,14 @@ weather.py (comando: "que tempo faz", gatilhos em WEATHER_TRIGGERS)
   get_weather_report() usa o Open-Meteo (gratuito, sem chave), com a
   cidade de config.WEATHER_CITY ou detectada por IP.
 
-research.py ("modo sério": "pesquise sobre X")
-  run_research(topic) busca na web (Tavily) e pede pra nuvem
-  (Groq/Gemini) escrever um relatório mais longo, salvando num .txt
+research.py ("modo pesquisa": tema, objetivo e exclusões)
+  run_research(topic, wanted, excluded) busca na web (Tavily) e pede pra nuvem
+  (Groq/Gemini) escrever um relatório mais longo, salvando um PDF A4
+  legível e inspirado na ABNT, com citações numeradas e referências
   (pasta RESEARCH_FOLDER, que por padrão é a mesma de NOTES_FOLDER, se
   configurada - assim documents.py já lê o relatório automaticamente
-  depois).
+  depois). commands.py coleta os três campos antes da busca, guardando
+  campos pendentes em state.py para continuar pela voz ou pelo HUD.
 
 ------------------------------------------------------------------
 11. system_control.py - AÇÕES NO COMPUTADOR
@@ -340,6 +341,11 @@ search_youtube(query) - "toca lofi no youtube", "procura gatos engraçados
 no youtube"
   Abre a busca do YouTube já com o termo pedido (não é o primeiro vídeo
   direto - isso precisaria da API paga/com chave do YouTube Data API).
+
+open_documentation(topic) - "abra a documentação do Python"
+  Abre URLs oficiais conhecidas (Python, JavaScript, TypeScript, Flask,
+  Django, SQLite e Ollama). Para outros tópicos, abre uma busca no navegador
+  padrão; a usuária deve conferir o domínio encontrado.
 
 open_work_mode(name) - "modo trabalho", "modo estudos"
   Abre, em sequência, todos os itens configurados em
@@ -388,8 +394,12 @@ speak(text, set_status)
 state.py - estado compartilhado, thread-safe, entre a voz e o painel web:
   conversation_history (lista em RAM, mostrada no transcript do HUD),
   get_status()/set_status() (texto de status atual: "Ouvindo",
-  "Pensando", "Falando", "Pausado", "Erro - tentando novamente"...),
+  "Pensando", "Falando", "Pesquisando", "Lendo documentos", "Pausado",
+  "Erro - tentando novamente"...),
   is_mic_enabled()/set_mic_enabled() (o botão de pausar o microfone).
+  O HUD colore pesquisa em âmbar, leitura de documentos em verde-azulado,
+  fala em verde e erro/pausa ociosa em vermelho. A thread com microfone
+  pausado não sobrescreve status de trabalho ativo.
 
 web_server.py - servidor Flask (run_web_server(), porta 5000, acessível
 por qualquer aparelho na mesma rede Wi-Fi):
@@ -425,9 +435,9 @@ desktop_app.py
 
 voice.py
   voice_cycle(conversation_history, set_status):
-    1. Se o microfone estiver pausado (state.is_mic_enabled() == False),
-       só atualiza o status pra "Pausado" e volta, sem nunca abrir o
-       microfone.
+     1. Se o microfone estiver pausado (state.is_mic_enabled() == False),
+       volta sem abrir o microfone; mantém a cor de tarefa ativa e só
+       mostra "Pausado" em vermelho quando Nico está ocioso.
     2. Escolhe entre wake word offline (Porcupine, se configurado) ou
        via nuvem (Google) para detectar "nico".
     3. Uma vez acionado, entra num loop de comandos: ouve, chama
@@ -511,7 +521,7 @@ só como contexto histórico. A arquitetura ATUAL está descrita nas seções
 1 a 17 acima.
 
 ------------------------------------------------------------------
-20. HISTÓRICO RESUMIDO DAS RODADAS 4 a 22
+20. HISTÓRICO RESUMIDO DAS RODADAS 4 a 23
 ------------------------------------------------------------------
 A partir da rodada 4, cada rodada corresponde a uma seção "Follow-up
 round N" no arquivo AGENTS.md (que tem o relato completo, módulo por
@@ -565,6 +575,12 @@ não duplicar tudo:
        transcript do HUD, porque o histórico só era atualizado quando a
        pergunta caía no caminho do LLM. Agora toda resposta, de qualquer
        tipo de comando, aparece no chat.
+    23 - Relatórios de pesquisa passaram a ser PDF A4 com layout inspirado
+      na ABNT, citações numeradas e referências; PDFs também são
+      pesquisáveis em Nico Notes. Adicionado comando para abrir
+      documentação oficial conhecida e estado de cor para pesquisa/leitura.
+      Corrigido o status vermelho fixo quando o mic está pausado durante
+      uma tarefa: pesquisa, leitura e fala agora mantêm suas cores.
 
 Para o relato completo de qualquer rodada (o que foi testado, que arquivo
 mudou exatamente, bugs encontrados durante o teste, etc.), consulte
