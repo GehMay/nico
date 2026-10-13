@@ -2,7 +2,17 @@ import os
 
 from dotenv import load_dotenv
 
-load_dotenv()  # lê variáveis de um arquivo .env local (fora do Git), se existir
+# O .env fica em %LOCALAPPDATA%\Nico\.env, fora da pasta do projeto - essa
+# pasta está dentro do OneDrive e sincroniza na nuvem, e o .env guarda
+# chaves de API e o link secreto do Google Calendar. Mantém compatibilidade
+# com instalações antigas: se não existir lá, cai de volta pro .env local
+# (fora do Git, mas dentro da pasta sincronizada) até ser migrado.
+_ENV_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Nico")
+_EXTERNAL_ENV_PATH = os.path.join(_ENV_DIR, ".env")
+if os.path.isfile(_EXTERNAL_ENV_PATH):
+    load_dotenv(_EXTERNAL_ENV_PATH)
+else:
+    load_dotenv()  # fallback: .env local ao lado deste arquivo, se existir
 
 # Comparados sem acento (text_utils.normalize_text agora remove acentos),
 # por isso aqui ficam só formas sem acento.
@@ -21,12 +31,79 @@ WAKE_WORD_ALIASES = {
     "niku": "nico",
 }
 
-# --- Wake word offline (opcional, Picovoice Porcupine) ---------------------
-# Ver wake_word.py para o que isso faz e como configurar (conta grátis,
-# treinar uma wake word "Nico" customizada, baixar o .ppn). Vazio por
-# padrão - sem isso, o Nico detecta a wake word do jeito original (nuvem).
-PICOVOICE_ACCESS_KEY = os.environ.get("PICOVOICE_ACCESS_KEY", "")
-PICOVOICE_KEYWORD_PATH = os.environ.get("PICOVOICE_KEYWORD_PATH", "")
+# --- Ativação local por voz ou duas palmas (Vosk) --------------------------
+WAKE_MODEL_PATH = os.path.join(
+    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+    "Nico",
+    "models",
+    "vosk-model-small-pt-0.3",
+)
+WAKE_SAMPLE_RATE = 16000
+WAKE_FRAME_LENGTH = 512
+CLAP_MIN_PEAK = 8000
+CLAP_MIN_RMS = 900
+CLAP_MIN_ZERO_CROSSING_RATE = 0.12
+CLAP_MIN_CREST_FACTOR = 4.0
+CLAP_MIN_INTERVAL_SECONDS = 0.22
+CLAP_MAX_INTERVAL_SECONDS = 1.3
+
+# --- Reconhecimento de locutor (filtrar a voz do usuário de TV/vídeo) ------
+# Mesmo modelo Vosk, agora o pacote de identificação de locutor (x-vector).
+SPEAKER_MODEL_PATH = os.path.join(
+    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+    "Nico",
+    "models",
+    "vosk-model-spk-0.4",
+)
+# Perfil de voz cadastrado (embedding cifrado) - fora da pasta do projeto
+# (OneDrive), mesma lógica do .env e da chave de criptografia.
+VOICE_PROFILE_PATH = os.path.join(
+    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Nico", "voice_profile.json"
+)
+# Similaridade de cosseno mínima (0 a 1) para considerar "é a mesma pessoa".
+# Testado com fala sintetizada: mesma voz ~0.81, vozes diferentes ~0.22 -
+# 0.50 fica no meio, mas pode precisar de ajuste fino com a voz real do
+# usuário e o microfone real (ruído de ambiente/qualidade do microfone
+# mudam a distribuição real dos valores).
+SPEAKER_SIMILARITY_THRESHOLD = 0.50
+# Duração da gravação de cadastro - precisa de alguns segundos contínuos de
+# fala pra extrair um x-vector confiável (testado: ~2s já funciona, frases
+# de uma única palavra não dão sinal suficiente).
+ENROLL_VOICE_DURATION_SECONDS = 12
+ENROLL_VOICE_TRIGGERS = (
+    "aprenda minha voz", "aprenda a minha voz", "cadastre minha voz",
+    "cadastrar minha voz", "cadastre a minha voz", "memorize minha voz",
+    "memorize a minha voz",
+)
+
+# --- Transcrição de comandos via Whisper local (faster-whisper) -----------
+# Substitui a transcrição por nuvem (Google) depois da wake word: entende
+# nomes/palavras em inglês misturados numa frase em português numa só
+# passada (testado: "abra o spotify e toque minha playlist do youtube"
+# saiu perfeito), sem precisar de duas chamadas como o fallback pt-BR/en-US.
+# "base" é o equilíbrio testado entre velocidade (~2s por frase comum numa
+# CPU comum) e qualidade - "small" é mais preciso e mais lento, "tiny" é
+# mais rápido e perde precisão, principalmente em nomes.
+WHISPER_MODEL_SIZE = "base"
+WHISPER_LANGUAGE = "pt"
+WHISPER_DEVICE = "cpu"
+WHISPER_COMPUTE_TYPE = "int8"
+
+# Frequência da verificação local do serviço Norton e dos perfis do Firewall.
+SECURITY_CHECK_INTERVAL_SECONDS = 300
+SECURITY_STATUS_TRIGGERS = (
+    "status de seguranca", "seguranca do meu pc", "meu antivirus esta ativo",
+    "norton esta ativo", "firewall esta ativo",
+)
+OPEN_NORTON_TRIGGERS = ("abra o norton", "abra norton", "abrir o norton", "abrir norton")
+
+# Quanto tempo de silêncio o SpeechRecognition espera antes de considerar que
+# a pessoa terminou de falar (padrão da biblioteca: 0.8s - curto demais para
+# uma pausa natural pra pensar/procurar uma palavra, que cortava o comando
+# pela metade). Valor mais alto = menos cortes no meio da fala, mas cada
+# comando demora um pouco mais pra ser processado (precisa desse tanto de
+# silêncio pra confirmar que a fala acabou).
+RECOGNIZER_PAUSE_THRESHOLD_SECONDS = 1.6
 
 DB_PATH = "nico_memory.db"
 
@@ -175,6 +252,40 @@ SITE_SHORTCUTS = {
 # Vários jeitos naturais de pedir pra abrir algo em português - checados
 # com startswith, então são prefixos completos (com o espaço no final).
 OPEN_PREFIXES = ("abra ", "abrir ", "abre ")
+UPDATE_DOCUMENT_TRIGGERS = (
+    "atualize o documento",
+    "atualiza o documento",
+    "atualize esse documento",
+    "atualiza esse documento",
+    "atualize a documentacao",
+    "atualiza a documentacao",
+    "atualize a documentacao do nico",
+    "atualize a documentacao do projeto",
+    "atualize os documentos",
+    "atualiza os documentos",
+    "edite o documento",
+    "edite esse documento",
+    "edite os documentos",
+    "edite a documentacao",
+    "escreva no documento",
+    "salve no documento",
+    "salve no arquivo",
+)
+RESEARCH_STORAGE_TRIGGERS = (
+    "salve a pesquisa no drive",
+    "salva a pesquisa no drive",
+    "salvar a pesquisa no drive",
+    "salve a pesquisa no google drive",
+    "salvar pesquisa no drive",
+)
+NO_MEMORY_TRIGGERS = (
+    "nao salve isso na memoria",
+    "nao salva isso na memoria",
+    "nao guarde isso na memoria",
+    "nao memorize isso",
+    "sem salvar na memoria",
+    "nao armazene isso na memoria",
+)
 OPEN_DOCUMENTATION_TRIGGERS = (
     "documentacao oficial de ", "documentacao oficial do ", "documentacao oficial da ",
     "documentacao de ", "documentacao do ", "documentacao da ",
@@ -239,6 +350,7 @@ WEATHER_CITY = os.environ.get("WEATHER_CITY", "")
 # Onde conseguir cada uma, de graça:
 #   GROQ_API_KEY   -> https://console.groq.com/keys
 #   GEMINI_API_KEY -> https://aistudio.google.com/apikey
+#   KIMI_API_KEY   -> https://platform.moonshot.ai/console/api-keys
 #   TAVILY_API_KEY -> https://app.tavily.com (free tier, ~1000 buscas/mês)
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 # Modelo grande disponível na conta Groq do usuário no momento (confirmado
@@ -248,6 +360,12 @@ GROQ_MODEL = "openai/gpt-oss-120b"
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-3.8-flash"
+
+# Kimi (Moonshot AI) - terceiro reforço em nuvem, mesmo formato de API da
+# OpenAI (compatível com o mesmo jeito de chamar do Groq). Sem conta/chave
+# configurada, esse passo é simplesmente pulado, como os outros.
+KIMI_API_KEY = os.environ.get("KIMI_API_KEY", "")
+KIMI_MODEL = "kimi-k2-0905-preview"
 
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
 
@@ -293,7 +411,29 @@ RESEARCH_TRIGGERS = (
     "faca uma pesquisa sobre", "pesquise a fundo sobre",
 )
 RESEARCH_FOLDER = NOTES_FOLDER or "pesquisas"
-RESEARCH_MAX_RESULTS = 6
+RESEARCH_MAX_RESULTS = 12
+
+# --- Geração de código via Kimi ("crie um site/projeto sobre X") -----------
+# Usa Kimi especificamente (não a cadeia Groq->Gemini->Kimi) - Kimi K2 é um
+# modelo voltado pra código. Os arquivos gerados SEMPRE vão para esta pasta
+# separada, nunca para os arquivos reais do Nico, e nunca são executados
+# automaticamente - são pra revisão manual (ou, no caso de uma sugestão de
+# melhoria pro próprio Nico, para revisão humana antes de aplicar de verdade
+# em uma conversa com o Claude). Ver "Follow-up round 33" no AGENTS.md.
+PROJECTS_FOLDER = "projetos_gerados"
+CREATE_PROJECT_TRIGGERS = (
+    "crie um site sobre", "crie um site para", "crie um site de",
+    "crie um projeto sobre", "crie um projeto para",
+    "programe um site", "programe um projeto",
+    "monte um site sobre", "monte um site para", "monte um projeto sobre",
+    "monte um projeto para", "faca um site sobre", "faca um site para",
+    "faca um projeto sobre", "faca um projeto para",
+    "sugira uma melhoria para voce", "sugira uma melhoria pra voce",
+    "crie uma funcionalidade para voce", "crie uma funcionalidade pra voce",
+)
+CODE_GEN_TIMEOUT = 120
+MAX_PROJECT_FILES = 25
+MAX_PROJECT_FILE_BYTES = 300_000
 
 # --- Grafo de memória (estilo "mini galáxia") -------------------------------
 # Pontuação mínima de similaridade (mesma escala de MATCH_THRESHOLD) para

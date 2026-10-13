@@ -2,7 +2,10 @@
 
 ## Purpose
 
-Nico is a local Portuguese (Brazilian) voice assistant for Windows, originally started as a personal
+The project folder and Python modules are named Nico, and that is also the assistant's user-facing
+name (spoken wake word, replies, window/HUD title) - a brief rename to "Jarvis" was tried and then
+reverted back to Nico, see "Follow-up round 28" below. It is a local Portuguese (Brazilian) voice
+assistant for Windows, originally started as a personal
 learning project. The user decided that learning Python through this project was not working for
 them and asked for the project to be finished directly, so they can study Python separately through
 basic, dedicated exercises instead. As of this update, the project is considered functionally
@@ -75,9 +78,12 @@ The project is split into modules (entry point is still `nico.py`):
   `config.RESEARCH_FOLDER` (see "Follow-up round 15" below).
 - `calculator.py` - `calculate_spoken()`/`extract_expression()`: a safe (AST-based, no `eval()`)
   arithmetic calculator for spoken math like "quanto é 23 vezes 7" (see "Follow-up round 17" below).
-- `wake_word.py` - `is_available()`/`listen_for_wake_word()`: optional 100%-local wake-word detection
-  via Picovoice Porcupine, used instead of the cloud-based check in `voice.py` when configured (see
-  "Follow-up round 17" below).
+- `wake_word.py` - `is_available()`/`listen_for_wake_word()`: local Vosk detection of "Jarvis" and a
+  signal-based double-clap detector, sharing one PyAudio stream. It fails closed if the Portuguese
+  model is missing or fails to load.
+- `security_monitor.py` - read-only PowerShell query for registered antivirus products, the Norton
+  service, and Windows Firewall profiles; polls every five minutes and alerts only on protection
+  state changes. It does not inspect files or perform remediation.
 - `google_calendar.py` - `get_today_events()`: optional read-only Google Calendar integration via a
   private iCal feed URL (no OAuth app needed), merged into the agenda/briefing commands (see
   "Follow-up round 19" below).
@@ -99,12 +105,12 @@ The project is split into modules (entry point is still `nico.py`):
   Mono fonts from Google Fonts).
 - `desktop_app.py` - `open_desktop_window()`: waits for the Flask server to be reachable, then opens
   it in a pywebview native window (this *is* the GUI now - no separate Tkinter window).
-- `voice.py` - `is_wake_word()`, `voice_cycle()`, `voice_loop()`; runs in a daemon thread started from
-  `nico.py`. `voice_cycle()` uses `wake_word.is_available()` to pick between offline (Porcupine) and
-  cloud (Google) wake-word detection each cycle (see "Follow-up round 17" below).
-- `nico.py` - wires the modules together, starts the voice thread and the web server thread (port
-  5000, listening on `0.0.0.0` so phones/tablets on the same Wi-Fi can reach it), prints the LAN URL
-  to the console, then opens the pywebview window (blocking call, replaces the old `app.mainloop()`).
+- `voice.py` - `voice_cycle()`, `voice_loop()`; runs in a daemon thread started from `nico.py`.
+  Idle activation is strictly local through Vosk or two claps; Google Speech Recognition only runs
+  after activation to transcribe the user's command.
+- `nico.py` - wires the modules together and serves Flask on `127.0.0.1:5000` only. The pywebview
+  mini-HUD is hidden until Vosk detects "Jarvis" or two claps; without a valid local model, the
+  microphone stays disabled and the HUD shows a setup warning.
 
 `state.conversation_history` is the single shared in-RAM history used by the voice loop and the web
 server's `/command` endpoint (and shown in the HUD transcript).
@@ -855,6 +861,412 @@ mesmo a resposta estando correta (e sendo falada, quando o microfone/áudio func
   sem preencher com conteúdo fora do escopo. `run_research()` também valida os campos antes de
   iniciar a busca.
 
+### Follow-up round 24: início automático, wake word estritamente local e mini-HUD (2026-10-09)
+
+- Nico now starts at the current Windows user's logon through a Startup-folder shortcut targeting
+  `pythonw.exe`; it does not require administrator rights and opens no console window.
+- `nico.py` binds Flask to `127.0.0.1`, so the phone/tablet panel is not reachable from the LAN.
+- `voice.py` no longer has a Google fallback for idle wake-word detection. A missing `.ppn`, missing
+  Porcupine dependency, or initialization error disables the microphone and leaves the HUD visible
+  with a setup/error status. Post-wake command recognition still uses Google Speech Recognition.
+- `desktop_app.py` creates a compact, frameless, top-center pywebview window hidden when local wake
+  detection is configured. It appears on activation and hides after a 10-second command timeout;
+  closing the HUD exits Nico. `web/index.html` retains the transcript, typed-command box, and mic
+  pause control in this compact view.
+- Verified locally: Porcupine was not configured in `.env` at implementation time; fail-closed
+  behavior, loopback configuration, hidden-window parameters, and pause-before-STT behavior passed
+  focused checks. Live microphone detection still requires the user's Picovoice AccessKey and
+  trained Windows `.ppn` file.
+
+### Follow-up round 25: Vosk local e ativação por duas palmas (2026-10-09)
+
+- Replaced Porcupine with the official Vosk small Brazilian Portuguese model (`vosk-model-small-pt-0.3`,
+  Apache 2.0, about 31 MB). The model is stored outside the repository at
+  `%LOCALAPPDATA%\Nico\models\vosk-model-small-pt-0.3` because Vosk's native library does not handle
+  the project's accented OneDrive path reliably.
+- `wake_word.py` uses the Vosk small Portuguese model to detect the Jarvis pronunciation (currently
+  mapped to its closest recognized Portuguese word) and listens for two short broadband impulses with
+  peak/RMS/zero-crossing/crest-factor thresholds. Both detections share one local audio stream;
+  no idle audio is saved or sent to a network service.
+- Removed the `pvporcupine` dependency and the Picovoice credentials/model settings. Added `vosk` to
+  `requirements.txt`; missing model or startup errors remain fail-closed. Google STT remains only for
+  post-activation command transcription.
+- Verified with the actual model loaded from LocalAppData and the constrained wake grammar; synthetic
+  double-clap frames activated while one clap, tonal speech, and steady noise were rejected. Actual
+  microphone sensitivity still needs a user test in the room where Nico will run.
+
+### Follow-up round 26: monitor de estado Norton e Firewall (2026-10-09)
+
+- The machine reports Norton Security Ultra registered/running, Windows Defender in SxS Passive Mode,
+  and all three Windows Firewall profiles enabled. Norton Application events available to the current
+  user were informational and did not expose reliable threat-detection data.
+- `security_monitor.py` runs a read-only PowerShell query every five minutes. If the registered Norton
+  service or a Firewall profile becomes inactive, the mini-HUD is shown with a warning; recovery is
+  reported separately. `commands.py` adds "status de segurança" and "abra o Norton" intents.
+- Jarvis does not scan downloads, delete files, or terminate processes. Norton/SmartScreen remain
+  responsible for download inspection and quarantine; the Norton alert/remediation API is not exposed
+  through the event data available on this machine. Manual remediation stays in Norton and under
+  explicit user control.
+
+### Follow-up round 27: security hardening pass (2026-10-09/10)
+
+The user asked for a direct security review of the whole codebase (more access to the machine is
+coming, including more sensitive data later) and then, separately, to add encryption for anything
+that touches the machine directly or holds personal data. Both done in the same pass:
+
+- **Real finding - stored XSS in the HUD**: `web/hud.js`'s transcript rendering used `innerHTML` with
+  the raw conversation text (what the user typed/said, plus the LLM/web-search-derived answer).
+  Anything that ever put HTML into that text (e.g. a page indexed by a Tavily search that the cloud
+  model quoted back verbatim in an answer) would execute as same-origin JavaScript inside the HUD -
+  able to call `/command`/`/mic/toggle` directly, bypassing every same-origin check, since it would
+  already be running as the page's own script. Fixed by building DOM nodes with `textContent` instead
+  of `innerHTML` (`web/hud.js`).
+- `web_server.py` gained standard security response headers (`X-Content-Type-Options`,
+  `X-Frame-Options: DENY`, and a `Content-Security-Policy` scoped to this app's own scripts plus the
+  CDNs already in use) as defense-in-depth against the same class of bug resurfacing. Applying a CSP
+  without `'unsafe-inline'` for scripts required moving `onclick="..."` attributes in `web/index.html`
+  and `web/memory.html` to `addEventListener` calls in `hud.js`/`galaxy.js`. `_is_same_origin_request()`
+  now also rejects requests with no `Origin` header at all (previously only checked it when present).
+- `calculator.py`: capped operand size and exponent (`_MAX_OPERAND`, `_MAX_EXPONENT`) - a spoken
+  expression like "2 elevado a 999999999999" built an arbitrary-precision Python int large enough to
+  hang the handling thread; now rejected before evaluating.
+- `tts.py`: the neural-voice cache (`tts_cache/`) grew forever, one `.mp3` per unique thing ever said -
+  added `_evict_oldest_cache_files()`, capping it at 500 files (oldest removed first) to bound disk
+  usage over months of use.
+- `__pycache__/nico.cpython-311.pyc` was accidentally tracked in Git from before `.gitignore` covered
+  that folder; untracked it (`git rm --cached`) - `.gitignore` already listed `__pycache__/`, so new
+  bytecode won't be re-added.
+- **New: field-level encryption for personal data at rest** - `crypto_utils.py` wraps a Fernet (AES)
+  key, generated once and stored at `%LOCALAPPDATA%\Nico\secret.key`, itself protected with the
+  Windows DPAPI (`win32crypt.CryptProtectData`/`CryptUnprotectData`) so it only decrypts under this
+  same Windows account on this same machine - no password prompt, which matters because Jarvis is a
+  hands-free assistant with no login flow anywhere else (including at Startup-folder autostart,
+  before any interactive session choice could happen). `database.py` now encrypts `user_text`/
+  `assistant_text` (conversation), `fact_text` (facts), and `reminder_text` (reminders) on write and
+  decrypts on read; `due_at`/`notified`/`created_at`/`id` stay in plain text since the reminder loop
+  and agenda queries filter on `due_at` in SQL directly (encrypting it would break those range
+  queries, and a bare timestamp alone isn't sensitive). Rows written before this change have no
+  `enc1:` prefix and are returned as-is (`decrypt_text` passes plain text through unchanged) - no
+  migration needed, nothing already remembered was lost, and it was verified directly against the
+  real `nico_memory.db` that pre-existing facts/conversations still read back correctly.
+- **`.env` moved out of OneDrive sync**: the project folder lives under `OneDrive\Área de Trabalho`,
+  so the `.env` file (API keys, the Google Calendar secret iCal URL) was syncing to the cloud in plain
+  text the whole time, even though it was always correctly out of Git. Moved the real file to
+  `%LOCALAPPDATA%\Nico\.env` (not synced) and `config.py` now loads from there first, falling back to
+  a project-local `.env` only if the external one doesn't exist (so an old install still works until
+  migrated). Verified live: `config.GROQ_API_KEY`/`TAVILY_API_KEY` still load correctly from the new
+  location. `.env.example` updated to tell the user to copy it there instead of into the project
+  folder.
+- **Deliberately not encrypted**: screenshots (`screenshots/`) and the TTS audio cache (`tts_cache/`) -
+  encrypting images/audio would mean they're no longer directly openable, which trades away the whole
+  point of a screenshot feature; flagged to the user as a choice rather than decided silently. The
+  research PDFs/`.docx` reports in `RESEARCH_FOLDER`/`NOTES_FOLDER` (on Google Drive, a separate sync
+  target) were also left as-is - same reasoning (meant to be opened directly in Drive) plus they're
+  already on infrastructure the user chose to trust with that data when setting up Drive sync.
+  Revisit if the user's threat model changes (e.g. wants screenshots encrypted too, accepting that
+  they'd need a small decrypt-to-view step).
+- `requirements.txt` gained `cryptography` and `pywin32` (the latter was already present transitively
+  via `pywebview` on Windows, confirmed importable before relying on it for DPAPI).
+- Verified: full `py_compile` across every module including the new `crypto_utils.py`; a live
+  encrypt/decrypt round-trip against a throwaway SQLite database (raw row confirmed stored as
+  `enc1:gAAAAA...`, all four `fetch_*` functions in `database.py` returning correctly decrypted
+  plain text); the moved `.env` confirmed loading through the new `config.py` path without any
+  secret being echoed back in chat at any point.
+
+### Follow-up round 28: revertido "Jarvis" de volta para "Nico" (2026-10-10)
+
+A rename to "Jarvis" (spoken wake word, replies, window/HUD title) had been applied by an earlier
+Copilot session before this one started; the user asked to revert it back to "Nico" everywhere, and
+separately reported that voice/double-clap activation had stopped working.
+
+- Reverted every user-facing occurrence back to "Nico": `config.WAKE_WORDS`/`WAKE_WORD_ALIASES`
+  (back to the original `nico`/`nicolo`/`nick`/`nic` list plus the misheard-name aliases from round
+  1), `wake_word.py`'s Vosk grammar and docstring, `commands.py`'s IDENTITY reply, `llm.py`'s
+  conversation-history labels and few-shot examples, `personality.py`'s system prompt opening line,
+  `desktop_app.py`'s `WINDOW_TITLE`, `state.py`'s default status, `web_server.py`'s custom header
+  (`X-Jarvis-Request` -> `X-Nico-Request`, matched in `web/hud.js`), and the HUD/galaxy page titles
+  and transcript labels (`web/index.html`, `web/memory.html`, `web/hud.js`, `web/galaxy.js`).
+- **Root cause of the voice/clap activation complaint**: during the "Jarvis" rename, the Vosk
+  recognizer's constrained grammar in `wake_word.py` had been pointed at `"arvores"` ("árvores" - the
+  closest *word the small Portuguese Vosk model actually recognizes*, picked as a stand-in for a
+  name the model has no direct vocabulary entry for), with `WAKE_WORD_ALIASES` mapping it back to
+  "jarvis". That word bears no real phonetic resemblance to "Jarvis" as actually spoken, so the
+  grammar was effectively listening for the wrong sound - a flawed substitution from whoever did
+  that rename. Reverting to "Nico" sidesteps the whole problem: "nico" is a word the Vosk Portuguese
+  model already recognizes directly, no alias/substitute needed, matching how `wake_word.py`'s wake
+  detection originally worked before "Jarvis" was ever introduced (round 25).
+  **Lesson: a constrained-grammar wake word only works if the grammar word is something the speech
+  model can actually recognize when the user says the real wake word out loud - picking a
+  "phonetically closest" stand-in is fragile unless it's actually checked against real pronunciation,
+  not just guessed from spelling.**
+- **Second, compounding cause**: Nico was still running an older process (`pythonw3.11.exe`, PID
+  10796) started before any of today's edits - Python doesn't hot-reload a running script, so that
+  instance was still using the broken "Jarvis"/"árvores" grammar in memory regardless of what got
+  fixed on disk (same lesson as round 5's cache-mismatch bug). Stopped that process and relaunched
+  Nico the same way the Startup shortcut does (`pythonw.exe nico.py`); confirmed via `/status` that
+  the new process came up listening (`"status": "Ouvindo"`, `"mic_enabled": true`), i.e. Vosk loaded
+  successfully with the corrected "nico" grammar.
+- Verified: full `py_compile` across every module; grepped the whole codebase afterward for any
+  remaining `jarvis`/`Jarvis` and found only two harmless internal comments in `config.py` describing
+  where the personality's tone was inspired from (not anything spoken or displayed) - left those as
+  historical context, not user-facing text.
+
+### Follow-up round 29: desktop/Startup shortcuts still said "Jarvis"; closing the HUD was quitting Nico entirely (2026-10-10)
+
+Two more real bugs surfaced right after round 28 shipped:
+
+- The Desktop shortcut and the Startup-folder autostart shortcut were still named `Jarvis.lnk` (just
+  the filename/icon label - their targets were always correct), and `Iniciar Nico.bat` opened its
+  console window titled "Jarvis". Renamed both shortcuts to `Nico.lnk` and fixed the `.bat`'s window
+  title to "Nico" - purely cosmetic, but part of "every user-facing Jarvis" from round 28 that a
+  code-only grep had missed since shortcuts/filenames aren't in the repo.
+- **Real functional bug**: the user said the wake word worked once, but after closing the HUD window
+  (the "×" button), it stopped responding to "Nico" or claps entirely. Root cause -
+  `desktop_app._WindowApi.close_nico()` (what the "×" button calls) called `_window.destroy()`,
+  which ends `webview.start()` in `desktop_app.open_desktop_window()`, which returns control to
+  `nico.py`'s `main()`, which then has nothing left to do and exits - taking every daemon thread down
+  with it (voice/wake-word loop, reminder loop, security monitor, Flask server). A user who sees a
+  window with a "×" naturally expects "dismiss the popup," not "quit the whole background assistant"
+  - especially one that's supposed to always be listening and that autostarts at login. Fixed by
+  changing `close_nico()` to call `_window.hide()` instead of `destroy()` - identical to what already
+  happens automatically after the 10-second no-command timeout (round 24). The HUD's close button
+  title text (`web/index.html`) updated from "Encerrar o Nico" to "Esconder (o Nico continua
+  ouvindo)" to set the right expectation. There is currently no in-app way to fully quit Nico (same
+  as before round 24's autostart - previously quitting meant literally closing the console window,
+  which no longer exists under `pythonw.exe`); if the user ever wants a real "sair"/quit action, that
+  would need its own explicit request and a decision on whether it needs a confirmation step.
+- Confirmed both running copies from round 28 had actually already exited by the time this was
+  reported (zero Python processes, port 5000 free) - consistent with the `destroy()` bug, not a
+  separate crash. Relaunched the same way the Startup shortcut does (`pythonw.exe nico.py`) with the
+  fix in place; `/status` confirmed `"Ouvindo"`/`mic_enabled: true` again.
+- **Lesson: a window's close ("×") button is a strong, well-known UI convention for "get rid of
+  this," and silently wiring it to end a whole background process (instead of the visible window
+  only) will surprise anyone who clicks it expecting the ordinary meaning - true even when the
+  behavior is "intentional" in the sense that someone chose to write `.destroy()` there.**
+
+### Follow-up round 30: pausas na fala, e reconhecimento de locutor pra ignorar TV/vídeo (2026-10-10)
+
+Two more real-use complaints: pausing mid-sentence to think cut the command short, and audio from a
+video/TV playing nearby gets picked up mixed with the user's own voice.
+
+- **Pausa na fala**: `speech_recognition`'s default `pause_threshold` is 0.8s of silence before it
+  decides the phrase ended - too short for a natural "let me find the word" pause. Added
+  `config.RECOGNIZER_PAUSE_THRESHOLD_SECONDS = 1.6` and set it on the shared `recognizer` instance in
+  `voice.py`. Trade-off, stated plainly to the user: every command now waits that much silence before
+  processing starts, so raising it further trades responsiveness for tolerance of longer pauses -
+  it's one constant, easy to retune if 1.6s is still too short or feels too slow.
+- **Reconhecimento de locutor (filtrar TV/vídeo)**: new `speaker_id.py`, built on the same approach as
+  `wake_word.py` - a second, small Vosk package (`vosk-model-spk-0.4`, ~13MB, same official
+  alphacephei.com source as the wake-word model, downloaded to
+  `%LOCALAPPDATA%\Nico\models\vosk-model-spk-0.4`) that extracts a 128-value "x-vector" voice
+  embedding from an audio clip via `KaldiRecognizer.SetSpkModel()`, reusing the already-loaded ASR
+  model from `wake_word._load_model()` rather than loading a second acoustic model.
+  - **Real constraint found through direct testing, not assumed**: a single short word (~0.6s, e.g.
+    the wake word itself) is too short for Vosk to produce an embedding at all (`FinalResult()` omits
+    the `spk` key) - confirmed with synthesized audio before writing any matching logic. A ~2 second
+    utterance already works reliably, which covers nearly all real spoken commands/questions except
+    single-word ones. `speaker_id.matches_profile()` therefore returns `None` (not `False`) when no
+    embedding could be extracted, and every caller treats `None` as "can't tell, let it through" -
+    never as a rejection. This means the feature cannot verify very short commands, and does not (and
+    structurally cannot, with this approach) separate two people talking at the exact same instant -
+    it filters out TV/video dialogue most of the time it's spoken near, not literally simultaneous
+    overlapping speech. This limitation was explained to the user up front, before building, and they
+    asked to proceed anyway.
+  - **Enrollment**: "aprenda minha voz" / "cadastre minha voz" (`config.ENROLL_VOICE_TRIGGERS`,
+    checked in `voice.py`'s command loop, before `handle_command()` - enrollment needs direct
+    microphone access for a fixed-duration recording, which only the voice path has, so it's not a
+    `commands.py` intent reachable from typed/web commands) - `speaker_id.enroll_from_microphone()`
+    records `config.ENROLL_VOICE_DURATION_SECONDS` (12s) of raw audio directly via `pyaudio` (not
+    `sr.Microphone().listen()`, which would cut on the first pause - enrollment needs one continuous
+    take), extracts the embedding, and saves it via `save_profile()`.
+  - **Verification gate**: `voice._listen_once()` gained a `verify_speaker` flag; when the main
+    command-capture call (`timeout=10` in the post-wake loop) sets it and a profile exists, the just
+    -captured `AudioData` is also converted to 16kHz PCM (`audio.get_raw_data(convert_rate=16000,
+    convert_width=2)` - free resampling via the already-included `audioop`/`SpeechRecognition` code
+    path, no new dependency) and checked against the profile. On a confirmed mismatch, `_listen_once`
+    returns `""`, which the existing loop already treats the same as "didn't catch anything" (silent
+    retry, no scolding message) - no new control-flow branch needed there. Clarification follow-ups
+    (`RESEARCH_CLARIFY`/`DOCUMENT_UPDATE_CLARIFY`/`CLARIFY`) are deliberately **not** gated the same
+    way yet, to keep this first version's surface area small; revisit if the user wants it everywhere.
+  - **Privacy**: the stored profile (`%LOCALAPPDATA%\Nico\voice_profile.json`) is biometric-ish data,
+    so it's encrypted at rest the same way as the `facts`/`conversation`/`reminders` tables
+    (`crypto_utils.encrypt_text`/`decrypt_text`, DPAPI-wrapped key) and lives outside the
+    OneDrive-synced project folder, same reasoning as round 27's `.env` move.
+  - **Threshold tuning is provisional**: `config.SPEAKER_SIMILARITY_THRESHOLD = 0.50` was picked from
+    a live test with two synthesized SAPI5 voices (Maria/pt-BR and Zira/en-US) - same-voice cosine
+    similarity ~0.81, different-voice ~0.22, so 0.50 cleanly separates those two. Real human speech
+    through a real microphone, with room noise, will have a different, noisier distribution; this is
+    a single tunable constant, flagged honestly as needing real-world verification once the user
+    actually enrolls and uses it, not claimed as validated end-to-end with their real voice.
+- `requirements.txt` unchanged - `pyaudio` and `vosk` were already dependencies (round 17/25); no new
+  package needed for this feature.
+- Verified: full `py_compile` across every module including the new `speaker_id.py`; a real
+  integration test through `speaker_id.py`'s actual functions (not a standalone script) - enrolled a
+  synthesized voice, confirmed a same-voice different-sentence clip matches (`True`), a different
+  synthesized voice doesn't (`False`), and a too-short clip returns `None` as designed; confirmed via
+  `/status` that Nico restarts cleanly with both this round's changes active. The real end-to-end
+  experience (does a real pause actually stop feeling like a cutoff; does real TV audio actually get
+  filtered with the user's real enrolled voice and real microphone) still needs the user's own testing
+  - synthesized-voice and short-clip testing only proves the mechanism works, not that 1.6s or 0.50
+  are the perfect real-world values.
+
+### Follow-up round 31: memória resetada, inglês no reconhecimento, e um bug real de cache (2026-10-10)
+
+- **Reset de memória**: a pedido do usuário ("tem muitas falas/perguntas pela metade"), limpou-se
+  apenas a tabela `conversation` (41 linhas) - `facts` e `reminders` ficaram intactos, por decisão
+  explícita do usuário entre as duas opções oferecidas. Backup do `nico_memory.db` anterior salvo em
+  `%LOCALAPPDATA%\Nico\backups\` (fora da pasta sincronizada do OneDrive, mesma lógica do round 27) -
+  não em `pesquisas/`/dentro do projeto. `VACUUM` rodado para compactar o arquivo depois do `DELETE`.
+  Nico foi reiniciado para também limpar `state.conversation_history` (lista em RAM, separada do
+  banco - round 22) e o transcript do HUD.
+- **Reconhecimento de inglês (nomes de empresas)**: a API gratuita do Google (`recognize_google`) só
+  aceita um idioma por chamada - não existe suporte real a alternância de idioma dentro da mesma
+  frase nessa API. `voice._listen_once()` agora tenta `language="pt-BR"` primeiro (o caso comum) e,
+  **somente se isso levantar `sr.UnknownValueError`** (não entendeu nada), tenta de novo o mesmo
+  áudio com `language="en-US"` antes de desistir. Isso ajuda quando um nome de empresa/produto em
+  inglês não tem encaixe fonético plausível em português e o reconhecedor pt-BR falha completamente;
+  não ajuda (e não há como ajudar, com essa API gratuita) quando o pt-BR produz algum texto, só que
+  errado/mal transliterado - aí não há sinal de que algo deu errado para acionar a segunda tentativa.
+  Limitação explicada ao usuário antes de implementar, não descoberta depois.
+- **Bug real encontrado e corrigido**: `commands._get_llm_answer()` tinha um branch morto - quando
+  tanto o Ollama local quanto a nuvem (Groq/Gemini) falhavam, ele buscava nos documentos locais de
+  novo mas **não fazia nada com o resultado e a função terminava sem `return`**, devolvendo `None`
+  implicitamente, em vez da desculpa documentada ("Cloud reinforcement logic" acima, item 6). Isso é
+  quase certamente uma causa real das "respostas sem sentido" que o usuário relatou - `None` cacheado
+  como resposta de uma pergunta real, ou passado pro `tts.speak()` sem checagem. Corrigido: agora
+  devolve `None` nesse branch como sinal explícito de "falha total", e `handle_command()` trata
+  `None` (ou uma resposta vazia) construindo a frase de desculpa ali mesmo e **pulando
+  `save_conversation()`** - nunca mais entra no cache. Verificado com um teste real que simula Ollama
+  e nuvem falhando ao mesmo tempo (monkeypatch), confirmando a frase de desculpa certa e
+  `save_conversation` não sendo chamado.
+- **Perguntas incompletas**: já não eram salvas no cache desde o round 22 (`handle_command()` retorna
+  antes de chegar em `save_conversation()` no caminho `INCOMPLETE`) - isso não mudou, só foi
+  confirmado. A causa real de frases cortadas na prática era o `pause_threshold` de 0,8s do round 30
+  (já corrigido para 1,6s) combinada com o bug acima, não uma falha nessa checagem específica.
+- Verificado: full `py_compile`; teste direto de `handle_command()` com falha total simulada
+  confirmando a desculpa certa e nenhuma escrita no cache; `/status` confirmando reinício limpo com
+  todas as correções deste round ativas.
+
+### Follow-up round 32: Kimi como 3º reforço, YouTube via yt-dlp, e Whisper local (2026-10-10)
+
+The user pasted a list of ~45 unrelated open-source projects and asked which would fit Nico. Most
+didn't (self-hosted platforms, generic multi-agent frameworks, games, curated link lists - documented
+in chat, not repeated here since none were adopted). Three were picked by the user to implement:
+
+- **Kimi (Moonshot AI) como terceiro reforço em nuvem**: `cloud_llm.py` gained `ask_kimi()`, same
+  OpenAI-compatible request shape as `ask_groq()` (Moonshot's API is OpenAI-compatible).
+  `ask_cloud_fallback()`'s chain is now Groq -> Gemini -> Kimi, same "skip if no key configured"
+  behavior as before. `config.KIMI_API_KEY`/`KIMI_MODEL` (`kimi-k2-0905-preview`), `.env.example`
+  updated. Inactive until the user creates a Moonshot account and sets the key - same pattern as
+  every other optional cloud provider in this project.
+- **YouTube via yt-dlp**: `system_control.search_youtube()` now uses `yt_dlp.YoutubeDL` with
+  `extract_flat` to run `ytsearch1:<query>` (no API key needed, unlike the YouTube Data API
+  considered and rejected in round 18) and opens the actual top result's video page directly,
+  announcing its real title ("Abrindo \"<título>\" no YouTube.") instead of just opening a search
+  results page. Falls back to the old search-page behavior on any failure (no internet, yt-dlp
+  broken by a YouTube layout change, etc.) - `yt-dlp` needs periodic updates to keep working against
+  YouTube's changes, which is a real maintenance cost this fallback absorbs gracefully instead of
+  breaking the command outright. Verified live: a real search for "lofi hip hop radio" opened the
+  correct real video with its real title.
+- **Whisper local (reconhecimento multilíngue de verdade)** - the user picked this knowing the
+  trade-off (new, heavier dependency) stated up front. Used `faster-whisper` (CTranslate2-based, no
+  PyTorch) rather than the original `openai-whisper`, matching this project's existing preference for
+  lighter local models (Vosk) over heavy ML frameworks. New `speech_to_text.py` -
+  `is_available()`/`preload()`/`transcribe_pcm16k()`, wrapping a `faster_whisper.WhisperModel`
+  (`config.WHISPER_MODEL_SIZE = "base"`, `WHISPER_LANGUAGE = "pt"`, CPU, int8 quantization - "base"
+  chosen as the tested balance of speed (~2s per ordinary sentence) vs. accuracy; "small" is more
+  accurate and slower, "tiny" faster and less accurate especially on names).
+  - **Real improvement, verified before integrating**: fed a synthesized "abra o spotify e toque
+    minha playlist do youtube" through both the old approach and Whisper - Whisper transcribed it
+    perfectly (both English brand names intact), which the pt-BR/en-US dual-pass hack from round 31
+    could never do in one pass (that API only accepts one language per call, so it only helps when
+    the whole utterance fails outright in Portuguese, not when a single word inside it does).
+  - `voice._listen_once()` now tries `speech_to_text.transcribe_pcm16k()` first when the module is
+    available, and only falls back to the old Google pt-BR/en-US path when it isn't (model/package
+    missing) - fully additive, same fail-open pattern as every local-first feature in this project.
+    The raw-PCM extraction (`audio.get_raw_data(convert_rate=16000, convert_width=2)`) is now computed
+    once and shared between speaker verification (round 30) and transcription, instead of being
+    computed twice.
+  - **Model loading cost**: the CTranslate2 model (~142MB for "base") downloads once from Hugging Face
+    into the user's global cache (`~/.cache/huggingface`, outside the OneDrive-synced project folder,
+    so this doesn't add to that sync concern either) and then loads into RAM, which took ~37 seconds
+    the first time in this session (download + load) and should be a few seconds on later loads (file
+    already cached). To avoid the *first real command* paying that cost mid-sentence,
+    `nico.py._start_background_services()` now also starts a daemon thread that calls
+    `speech_to_text.preload()` at startup, in parallel with the other background services.
+  - Verified end-to-end through the real code path (not a standalone script): monkeypatched
+    `sr.Microphone`/`recognizer.listen` inside `voice.py` to feed a synthesized mixed-language WAV
+    through the actual `_listen_once()` function, confirming it returns the correct, fully-intact
+    transcription via the Whisper path. Confirmed clean startup with the preload thread active and no
+    errors in a foreground/console run before switching back to the normal `pythonw.exe` (no console)
+    launch used in production.
+  - **Honesty about remaining limits**: Whisper's `language="pt"` setting forces Portuguese decoding
+    (deliberately, to avoid misdetecting the language from one embedded foreign word and transcribing
+    the *whole* sentence in English) - it is not literal word-by-word code-switching, it relies on
+    Whisper's multilingual subword tokenizer naturally keeping recognizable foreign names/words
+    intact within a Portuguese decode, which is why it worked well in testing, not because the two
+    languages are being explicitly mixed by design. Real-world accuracy on the user's actual voice,
+    accent, and microphone - and actual CPU latency on their laptop vs. this test environment - still
+    needs their own live testing, same disclaimer pattern as every other local-model feature in this
+    project.
+- `requirements.txt` gained `yt-dlp`, `faster-whisper`, `numpy` (not `pywin32`/`cryptography` related
+  - those were already added in round 27).
+- Verified: full `py_compile` across every module including the two new ones; live tests for all
+  three features as described above; `/status` confirming a single clean instance running with
+  everything active together.
+
+### Follow-up round 33: geração de código via Kimi - com um limite de segurança deliberado (2026-10-10)
+
+The user asked for two things: using Kimi specifically for programming (ask Nico for a site/project
+and have Kimi build it), and - explicitly stated as something they want - having Nico modify its own
+source code autonomously ("self-programming").
+
+- **Decision made and explained to the user before building anything**: autonomous self-modification
+  (generated code applying itself directly to Nico's own live source files, with no human review, on
+  a process that autostarts at login with microphone/file/calendar access) was not built. This isn't
+  a hypothetical caution - this very session already produced multiple real bugs from well-intentioned
+  changes that *did* go through review (the "Jarvis" wake-word grammar pointed at a phonetically
+  unrelated word in round 28/30, `_get_llm_answer()` silently returning `None` in round 31) - letting
+  an LLM rewrite and restart the assistant from a voice command, with no equivalent review step, is a
+  materially higher-risk version of mistakes already proven to happen in this exact project. Explained
+  this reasoning directly to the user (not just asserted it) and proposed a safer scope that still
+  serves both of their goals; they confirmed it before any code was written.
+- **What got built instead - one feature, same safety boundary for both use cases**: new
+  `code_builder.py` - `build_project(description)` calls Kimi specifically (`cloud_llm.ask_kimi()`,
+  not the Groq->Gemini->Kimi fallback chain, since the user wants Kimi specifically for code) with a
+  system prompt (`CODE_SYSTEM_PROMPT`) that asks for a complete, working small project, formatted as
+  repeated `### ARQUIVO: <path>` + fenced code block sections - a format chosen specifically because
+  a single regex can reliably recover a "virtual filesystem" from one plain-text model
+  response. Parsed files are written to a **new, isolated subfolder** under `config.PROJECTS_FOLDER`
+  (`projetos_gerados/`, gitignored like `screenshots/`/`pesquisas/` - `pesquisas/` itself turned out
+  to be missing from `.gitignore` despite round 15's docs claiming it was covered, since the folder
+  had never actually been created on this machine until now to expose the gap; both are in
+  `.gitignore` now) - **never Nico's own project files, and nothing is ever executed**. This same
+  mechanism covers "self-programming" safely: "sugira uma melhoria para você" / "crie uma
+  funcionalidade para você" (also in `CREATE_PROJECT_TRIGGERS`) produces a draft in that same sandbox
+  folder, for the user to look at and bring to a conversation with Claude if they want it actually
+  integrated - not a live self-edit.
+  - **Guardrails on the generated output itself**, verified with a deliberately adversarial test
+    (not assumed safe): `_is_safe_relative_path()` rejects any suggested file path containing `..`,
+    a leading `/`, or a Windows drive letter (`C:`) - tested with a mocked Kimi response that tried to
+    write `../../../evil.txt`, confirmed the file was silently skipped and nothing was written outside
+    the sandboxed project folder. `MAX_PROJECT_FILES` (25) and `MAX_PROJECT_FILE_BYTES` (300KB) cap
+    the size of what gets written, regardless of what a (mis)behaving response might contain.
+  - New `CREATE_PROJECT` intent in `classify_command()`/`handle_command()` (`commands._create_project()`),
+    following the same shape as `RESEARCH`/`_run_research()` - runs synchronously (can take a while,
+    same as research mode), reports the saved path and explicitly says the code isn't run
+    automatically, and fails gracefully with a spoken message if Kimi isn't configured or the call
+    fails (never raises past `handle_command()`).
+  - `ask_kimi()` gained an optional `timeout` parameter (`config.CODE_GEN_TIMEOUT = 120`, longer than
+    the normal `CLOUD_TIMEOUT = 30` - a multi-file project response needs more generation time than a
+    short spoken answer).
+- Verified: full `py_compile`; a mocked end-to-end test through the real `handle_command()` path
+  ("crie um site sobre receitas veganas" correctly classified, routed, and built into a real sandboxed
+  folder); the path-traversal rejection test described above; confirmed a single clean Nico instance
+  running with the feature active. Not yet tested with a real Kimi API call (no key configured on
+  this machine yet) - the request-building code mirrors `ask_groq()`'s already-proven shape exactly,
+  but an actual generated project's real quality/completeness needs the user's own first real use.
+
 ## Future Goals (explicitly deferred, not started)
 
 - Phone notifications and/or calls - previously implemented via CallMeBot (Telegram), removed in round
@@ -865,8 +1277,8 @@ mesmo a resposta estando correta (e sendo falada, quando o microfone/áudio func
 - Reading the user's existing "Cursos" (or other) Drive folders is supported (`.docx` reader is ready)
   but not wired up - add the path to `NOTES_FOLDER`/`DOCUMENT_FOLDERS` if/when the user wants it
   searched.
-- Deeper phone/tablet OS integration beyond the local web panel (notifications, contacts, a real
-  mobile app) - the web panel in `web_server.py` is the current, lighter-weight version.
+- Phone/tablet access to the web panel is currently disabled by the user's local-only choice; the
+  server is bound to loopback. Re-enable LAN access only if the user asks for it again.
 - `DOCUMENTS_FOLDER` still needs to be filled in once the user installs Google Drive Desktop and
   confirms the local synced path for the "Nico Research" folder.
 - Camera-based features (facial recognition for security/unlock, or controlling the PC via hand/body

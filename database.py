@@ -1,6 +1,7 @@
 import sqlite3
 
 from config import DB_PATH
+from crypto_utils import decrypt_text, encrypt_text
 
 
 def open_database():
@@ -34,7 +35,7 @@ def save_conversation(user_text, assistant_text):
     connection = open_database()
     connection.execute(
         "INSERT INTO conversation (user_text, assistant_text) VALUES (?, ?)",
-        (user_text, assistant_text)
+        (encrypt_text(user_text), encrypt_text(assistant_text))
     )
     connection.commit()
     connection.close()
@@ -45,14 +46,14 @@ def fetch_all_conversations():
     cursor = connection.execute("SELECT user_text, assistant_text FROM conversation")
     rows = cursor.fetchall()
     connection.close()
-    return rows
+    return [(decrypt_text(user_text), decrypt_text(assistant_text)) for user_text, assistant_text in rows]
 
 
 def save_fact(fact_text):
     connection = open_database()
     connection.execute(
         "INSERT INTO facts (fact_text) VALUES (?)",
-        (fact_text,)
+        (encrypt_text(fact_text),)
     )
     connection.commit()
     connection.close()
@@ -63,14 +64,14 @@ def fetch_all_facts():
     cursor = connection.execute("SELECT fact_text, created_at FROM facts ORDER BY id DESC")
     rows = cursor.fetchall()
     connection.close()
-    return rows
+    return [(decrypt_text(fact_text), created_at) for fact_text, created_at in rows]
 
 
 def save_reminder(reminder_text, due_at_iso):
     connection = open_database()
     connection.execute(
         "INSERT INTO reminders (reminder_text, due_at) VALUES (?, ?)",
-        (reminder_text, due_at_iso)
+        (encrypt_text(reminder_text), due_at_iso)
     )
     connection.commit()
     connection.close()
@@ -84,7 +85,7 @@ def fetch_due_reminders(now_iso):
     )
     rows = cursor.fetchall()
     connection.close()
-    return rows
+    return [(reminder_id, decrypt_text(reminder_text)) for reminder_id, reminder_text in rows]
 
 
 def fetch_reminders_between(start_iso, end_iso):
@@ -95,7 +96,7 @@ def fetch_reminders_between(start_iso, end_iso):
     )
     rows = cursor.fetchall()
     connection.close()
-    return rows
+    return [(decrypt_text(reminder_text), due_at) for reminder_text, due_at in rows]
 
 
 def mark_reminder_notified(reminder_id):

@@ -27,28 +27,53 @@ RESEARCH_SYSTEM_PROMPT = (
 )
 
 
+def _build_search_queries(topic, wanted, excluded):
+    base_terms = [part.strip() for part in (topic, wanted) if part and part.strip()]
+    exclusion_terms = [
+        term.strip(" .,-:;!?")
+        for term in re.split(r"[,;]|\b(?:e|ou)\b", excluded)
+        if term.strip() and len(term.strip()) > 2
+    ]
+
+    queries = [
+        " ".join(base_terms),
+        f"{topic} {wanted} dados recentes",
+        f"{topic} {wanted} principais pontos",
+        f"{topic} {wanted} análise"
+    ]
+
+    if exclusion_terms:
+        negative = " ".join(f'-{term}' for term in exclusion_terms[:3])
+        queries.append(f"{topic} {wanted} {negative}")
+
+    dedup = []
+    seen = set()
+    for query in queries:
+        normalized = " ".join(query.split())
+        if normalized and normalized.lower() not in seen:
+            dedup.append(normalized)
+            seen.add(normalized.lower())
+    return dedup
+
+
 def _build_research_prompt(topic, wanted, excluded, results):
     snippets = "\n".join(
         f"[{index}] {result.get('title', '')} ({result.get('url', '')}): "
-        f"{result.get('content', '')[:700]}"
+        f"{result.get('content', '')[:1200]}"
         for index, result in enumerate(results, start=1)
     )
     return (
-        "Escreva o conteúdo de um relatório de pesquisa seguindo rigorosamente "
-        "o tema, o objetivo e as exclusões informados. Não inclua os assuntos "
-        "excluídos; se as fontes fornecidas não permitirem cumprir algum critério, "
-        "declare essa limitação em vez de preencher com conteúdo fora do pedido. "
-        "Organize exatamente nesta sequência: RESUMO (um parágrafo objetivo), "
-        "PALAVRAS-CHAVE (3 a 5 termos separados por ponto e vírgula), "
-        "1 INTRODUÇÃO, 2 DESENVOLVIMENTO, 3 CONSIDERAÇÕES FINAIS. Use "
-        "parágrafos curtos, explique termos técnicos e cite as fontes no texto "
-        "com os números fornecidos, por exemplo [1]. Não crie uma seção de "
-        "referências: ela será montada pelo programa a partir das URLs reais. "
-        "Não use Markdown nem invente dados.\n\n"
+        "Escreva um relatório de pesquisa completo e bem fundamentado. "
+        "Use exclusivamente as fontes fornecidas e não omita limitações. "
+        "Se as fontes forem insuficientes para algum ponto, diga isso claramente. "
+        "Siga exatamente esta sequência: RESUMO, PALAVRAS-CHAVE, 1 INTRODUÇÃO, "
+        "2 DESENVOLVIMENTO, 3 CONSIDERAÇÕES FINAIS. Cite as fontes no texto com "
+        "[1], [2], [3], e assim por diante. Não invente autores, datas, dados, "
+        "ou referências. Não use Markdown.\n\n"
         f"Tema: {topic}\n"
         f"O que o usuário quer: {wanted}\n"
         f"O que o usuário não quer: {excluded}\n\n"
-        f"Resultados de pesquisa:\n{snippets}\n\n"
+        f"Resultados de pesquisa (fontes reais):\n{snippets}\n\n"
         "Conteúdo do relatório:"
     )
 
@@ -171,12 +196,24 @@ def run_research(topic, wanted, excluded):
     if not TAVILY_API_KEY:
         raise RuntimeError("TAVILY_API_KEY nao configurada - pesquisa na web indisponivel")
 
-    search_query = f"{topic}. Foco da pesquisa: {wanted}"
-    results = search_web(search_query, max_results=RESEARCH_MAX_RESULTS)
-    if not results:
+    queries = _build_search_queries(topic, wanted, excluded)
+    combined = []
+    seen_urls = set()
+    for query in queries:
+        results = search_web(query, max_results=max(3, RESEARCH_MAX_RESULTS // len(queries)))
+        for result in results:
+            url = (result or {}).get("url")
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            combined.append(result)
+        if len(combined) >= RESEARCH_MAX_RESULTS:
+            break
+
+    if not combined:
         raise RuntimeError(f"busca na web nao retornou resultados para '{topic}'")
 
-    prompt = _build_research_prompt(topic, wanted, excluded, results)
+    prompt = _build_research_prompt(topic, wanted, excluded, combined[:RESEARCH_MAX_RESULTS])
     report = ask_cloud_fallback(prompt, system_prompt=RESEARCH_SYSTEM_PROMPT)
 
     os.makedirs(RESEARCH_FOLDER, exist_ok=True)
@@ -184,6 +221,6 @@ def run_research(topic, wanted, excluded):
     timestamp = now.strftime("%Y-%m-%d %H-%M")
     filename = f"{timestamp} - Pesquisa - {_safe_filename_part(topic)}.pdf"
     path = os.path.join(RESEARCH_FOLDER, filename)
-    _write_research_pdf(topic, report, results, path, now)
+    _write_research_pdf(topic, report, combined[:RESEARCH_MAX_RESULTS], path, now)
 
     return path

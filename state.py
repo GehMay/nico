@@ -11,6 +11,7 @@ _status = "Nico está iniciando..."
 # sem ele ficar ouvindo o ambiente. Começa ligado (True = escutando normal).
 _mic_enabled = True
 _pending_research = None
+_pending_document_update = None
 
 
 def get_status():
@@ -44,3 +45,14 @@ def set_pending_research(request):
     global _pending_research
     with _lock:
         _pending_research = dict(request) if request else None
+
+
+def get_pending_document_update():
+    with _lock:
+        return dict(_pending_document_update) if _pending_document_update else None
+
+
+def set_pending_document_update(request):
+    global _pending_document_update
+    with _lock:
+        _pending_document_update = dict(request) if request else None

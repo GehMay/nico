@@ -4,13 +4,22 @@ import requests
 import speech_recognition as sr
 
 import state
+from desktop_app import hide_desktop_window, show_desktop_window
+import speaker_id
+import speech_to_text
 import wake_word
 from commands import handle_command, resolve_clarification
-from config import WAKE_WORD_ALIASES, WAKE_WORDS
+from config import (
+    ENROLL_VOICE_TRIGGERS,
+    RECOGNIZER_PAUSE_THRESHOLD_SECONDS,
+    WAKE_WORD_ALIASES,
+    WAKE_WORDS,
+)
 from text_utils import normalize_text
 from tts import speak
 
 recognizer = sr.Recognizer()
+recognizer.pause_threshold = RECOGNIZER_PAUSE_THRESHOLD_SECONDS
 
 
 def is_wake_word(text):
@@ -29,71 +38,93 @@ def is_wake_word(text):
     return False
 
 
-def _listen_once(set_status, timeout, phrase_time_limit=None):
+def _listen_once(set_status, timeout, phrase_time_limit=None, verify_speaker=False):
     with sr.Microphone() as source:
         set_status("Ouvindo")
         recognizer.adjust_for_ambient_noise(source, duration=0.5)
         audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
+    if not state.is_mic_enabled():
+        set_status("Pausado")
+        return ""
+
+    pcm16k = audio.get_raw_data(convert_rate=16000, convert_width=2)
+
+    if verify_speaker and speaker_id.has_profile():
+        if speaker_id.matches_profile(pcm16k) is False:
+            print("Áudio ignorado: a voz não corresponde ao perfil cadastrado.")
+            return ""
+
     set_status("Pensando")
-    return recognizer.recognize_google(audio, language="pt-BR")
 
+    if speech_to_text.is_available():
+        # Whisper local entende nomes/palavras em inglês misturados na
+        # frase em português numa só passada - substitui a transcrição por
+        # nuvem (Google) quando disponível.
+        text = speech_to_text.transcribe_pcm16k(pcm16k)
+        if text:
+            return text
+        raise sr.UnknownValueError()
 
-def _cloud_wake_word_detected(set_status):
-    """Detecta a wake word do jeito original (manda o áudio pro Google).
-    Devolve True se detectou a wake word, False se não (silêncio, não
-    entendeu, ou entendeu mas não era a wake word).
-    """
     try:
-        text = _listen_once(set_status, timeout=10, phrase_time_limit=5)
+        return recognizer.recognize_google(audio, language="pt-BR")
     except sr.UnknownValueError:
-        print("I didn't understand what you said. Try again.")
-        return False
-    except sr.WaitTimeoutError:
-        return False
-    except sr.RequestException as error:
-        print("Speech recognition service unavailable:", error)
-        return False
-
-    print("Google heard the wake word:", repr(text))
-
-    if not is_wake_word(text):
-        speak("Ainda não conheço esse comando.", set_status)
-        return False
-
-    return True
+        # O português não entendeu nada - tenta em inglês antes de desistir.
+        # Isso ajuda com nomes de empresas/produtos em inglês que não têm
+        # nenhum encaixe fonético plausível em português (a API gratuita do
+        # Google só aceita um idioma por chamada, não dá pra misturar os
+        # dois numa frase só). Só usado se o Whisper local não estiver
+        # disponível - é o caminho antigo, mantido como alternativa.
+        return recognizer.recognize_google(audio, language="en-US")
 
 
 def voice_cycle(conversation_history, set_status):
+    if not wake_word.is_available():
+        status = "Erro - configure a wake word local"
+        if state.is_mic_enabled() or state.get_status() != status:
+            state.set_mic_enabled(False)
+            set_status(status)
+            show_desktop_window()
+        time.sleep(2)
+        return
+
     if not state.is_mic_enabled():
         # Microfone pausado pelo botão do HUD - não abre o microfone nem
         # manda nada pra nuvem enquanto estiver assim.
         active_statuses = {
             "Pensando", "Falando", "Pesquisando", "Lendo documentos",
             "Aguardando aprovação", "Executando ação",
+            "Erro - configure a wake word local",
+            "Erro - falha na wake word local",
         }
         if state.get_status() not in active_statuses:
             set_status("Pausado")
         time.sleep(0.5)
         return
 
-    if wake_word.is_available():
-        try:
-            wake_word.listen_for_wake_word(set_status)
-        except Exception as error:
-            print("Offline wake-word detection failed, falling back to cloud this time:", error)
-            if not _cloud_wake_word_detected(set_status):
-                return
-    else:
-        if not _cloud_wake_word_detected(set_status):
-            return
+    try:
+        activated = wake_word.listen_for_wake_word(set_status)
+    except Exception as error:
+        print("Local wake-word detection failed; microphone disabled without cloud fallback:", error)
+        state.set_mic_enabled(False)
+        set_status("Erro - falha na wake word local")
+        show_desktop_window()
+        return
+
+    if not activated:
+        set_status("Pausado")
+        return
+
+    show_desktop_window()
 
     speak("Sim, estou ouvindo.", set_status)
 
     while True:
         try:
-            command_text = _listen_once(set_status, timeout=10)
+            command_text = _listen_once(set_status, timeout=10, verify_speaker=True)
         except sr.WaitTimeoutError:
             print("No command for 10 seconds. Waiting for wake word.")
+            if state.is_mic_enabled():
+                hide_desktop_window()
             break
         except sr.UnknownValueError:
             print("I didn't understand that command.")
@@ -101,18 +132,32 @@ def voice_cycle(conversation_history, set_status):
         except sr.RequestException as error:
             print("Speech recognition service unavailable:", error)
             speak("Não consigo acessar o serviço de reconhecimento de voz agora.", set_status)
+            hide_desktop_window()
             break
 
         print("Google heard the command:", repr(command_text))
 
         if not command_text or not command_text.strip():
+            if not state.is_mic_enabled():
+                break
+            continue
+
+        if any(trigger in normalize_text(command_text) for trigger in ENROLL_VOICE_TRIGGERS):
+            if speaker_id.is_available():
+                speaker_id.enroll_from_microphone(set_status, speak)
+            else:
+                speak(
+                    "Não consigo cadastrar sua voz agora - falta o modelo de "
+                    "identificação de locutor.",
+                    set_status,
+                )
             continue
 
         try:
             result = handle_command(command_text, conversation_history)
 
-            if result.kind == "RESEARCH_CLARIFY":
-                while result.kind == "RESEARCH_CLARIFY":
+            if result.kind in {"RESEARCH_CLARIFY", "DOCUMENT_UPDATE_CLARIFY"}:
+                while result.kind in {"RESEARCH_CLARIFY", "DOCUMENT_UPDATE_CLARIFY"}:
                     speak(result.text, set_status)
                     try:
                         reply_text = _listen_once(set_status, timeout=20)

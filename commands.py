@@ -1,3 +1,6 @@
+import datetime
+import os
+import re
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
@@ -9,17 +12,24 @@ from config import (
     BATTERY_TRIGGERS,
     BRIEFING_TRIGGERS,
     CALC_TRIGGERS,
+    CREATE_PROJECT_TRIGGERS,
     INCOMPLETE_TRAILING_WORDS,
     MIN_COMMAND_WORDS,
+    NO_MEMORY_TRIGGERS,
+    OPEN_NORTON_TRIGGERS,
     OPEN_DOCUMENTATION_TRIGGERS,
     OPEN_PREFIXES,
     REALTIME_KEYWORDS,
     REMEMBER_RECALL_PREFIXES,
     REMEMBER_TRIGGERS,
     RESEARCH_TRIGGERS,
+    SECURITY_STATUS_TRIGGERS,
+    RESEARCH_STORAGE_TRIGGERS,
+    RESEARCH_FOLDER,
     SCREENSHOT_TRIGGERS,
     TAVILY_API_KEY,
     TIMER_TRIGGERS,
+    UPDATE_DOCUMENT_TRIGGERS,
     VOLUME_DOWN_WORDS,
     VOLUME_KEYWORDS,
     VOLUME_MUTE_TRIGGERS,
@@ -29,6 +39,7 @@ from config import (
     YOUTUBE_SEARCH_FILLER_WORDS,
 )
 from calculator import calculate_spoken, extract_expression
+from code_builder import build_project
 from database import save_conversation, save_fact
 from documents import build_document_prompt, search_documents
 from facts import build_facts_prompt, search_facts
@@ -37,7 +48,14 @@ from llm import ask_ollama, build_context_prompt, get_current_time
 from memory import find_conversation
 from reminders import get_today_agenda, maybe_schedule_reminder, schedule_timer
 from research import run_research
-from state import get_pending_research, set_pending_research, set_status
+from security_monitor import describe_security_status, get_security_status, open_norton
+from state import (
+    get_pending_document_update,
+    get_pending_research,
+    set_pending_document_update,
+    set_pending_research,
+    set_status,
+)
 from system_control import (
     get_battery_status,
     open_documentation,
@@ -83,6 +101,12 @@ def classify_command(command_text):
     if "quem e voce" in normalized or "o que e voce" in normalized:
         return "IDENTITY"
 
+    if any(trigger in normalized for trigger in SECURITY_STATUS_TRIGGERS):
+        return "SECURITY_STATUS"
+
+    if any(trigger in normalized for trigger in OPEN_NORTON_TRIGGERS):
+        return "OPEN_NORTON"
+
     if any(trigger in normalized for trigger in BRIEFING_TRIGGERS):
         return "BRIEFING"
 
@@ -109,6 +133,18 @@ def classify_command(command_text):
 
     if any(trigger in normalized for trigger in RESEARCH_TRIGGERS):
         return "RESEARCH"
+
+    if any(trigger in normalized for trigger in CREATE_PROJECT_TRIGGERS):
+        return "CREATE_PROJECT"
+
+    if any(trigger in normalized for trigger in RESEARCH_STORAGE_TRIGGERS):
+        return "RESEARCH_STORAGE"
+
+    if any(trigger in normalized for trigger in UPDATE_DOCUMENT_TRIGGERS):
+        return "UPDATE_DOCUMENT"
+
+    if any(normalized == trigger for trigger in NO_MEMORY_TRIGGERS):
+        return "NO_MEMORY"
 
     # "modo" em qualquer lugar da frase (ex.: "modo trabalho", "ativar o
     # modo trabalho", "entra no modo estudos") - o nome do espaço é tudo
@@ -172,8 +208,14 @@ def handle_command(command_text, conversation_history):
     core_text, was_question = strip_request_wrapper(command_text)
     command_type = classify_command(core_text)
 
+    if command_type == "UPDATE_DOCUMENT":
+        return _continue_document_update(_parse_document_update(core_text), was_question)
+
     if command_type == "RESEARCH":
         return _continue_or_run_research(_parse_research_fields(core_text), was_question)
+
+    if command_type == "CREATE_PROJECT":
+        return _create_project(_extract_after_trigger(core_text, CREATE_PROJECT_TRIGGERS))
 
     pending_research = get_pending_research()
     if pending_research:
@@ -182,6 +224,32 @@ def handle_command(command_text, conversation_history):
             return CommandResult("ANSWER", "Pesquisa cancelada.")
         return _continue_or_run_research(
             _parse_research_fields(core_text, pending_research), was_question
+        )
+
+    pending_document_update = get_pending_document_update()
+    if pending_document_update:
+        if normalize_text(core_text) in {"cancela atualizacao", "cancelar atualizacao", "cancela", "cancelar"}:
+            set_pending_document_update(None)
+            return CommandResult("ANSWER", "Atualização do documento cancelada.")
+        return _continue_document_update(
+            _parse_document_update(core_text, pending_document_update, followup=True),
+            was_question,
+        )
+
+    if command_type == "RESEARCH_STORAGE":
+        if RESEARCH_FOLDER == "pesquisas":
+            return CommandResult(
+                "ANSWER",
+                "A pasta do Drive não está configurada. Os relatórios estão sendo salvos localmente em pesquisas.",
+            )
+        return CommandResult(
+            "ANSWER", f"Os relatórios do Modo Pesquisa já são salvos em {RESEARCH_FOLDER}."
+        )
+
+    if command_type == "NO_MEMORY":
+        return CommandResult(
+            "ANSWER",
+            "Certo. Pesquisas do Modo Pesquisa não são gravadas na memória de conversas nem nos fatos lembrados.",
         )
 
     if command_type == "TIME":
@@ -204,6 +272,23 @@ def handle_command(command_text, conversation_history):
 
     if command_type == "IDENTITY":
         return CommandResult("ANSWER", "Eu sou o Nico, seu assistente de voz pessoal, sempre à sua disposição.")
+
+    if command_type == "SECURITY_STATUS":
+        try:
+            return CommandResult("ANSWER", describe_security_status(get_security_status()))
+        except Exception as error:
+            print("Security status unavailable:", error)
+            return CommandResult("ANSWER", "Não consegui consultar o estado do Norton e do Firewall agora.")
+
+    if command_type == "OPEN_NORTON":
+        try:
+            open_norton()
+            return CommandResult(
+                "ANSWER", "Abrindo o Norton para você verificar a proteção ou iniciar uma verificação."
+            )
+        except OSError as error:
+            print("Could not open Norton:", error)
+            return CommandResult("ANSWER", "Não consegui abrir o Norton neste momento.")
 
     if command_type == "BRIEFING":
         return CommandResult("ANSWER", _morning_briefing())
@@ -292,16 +377,21 @@ def handle_command(command_text, conversation_history):
             # cai no caminho normal do LLM (busca na web + nuvem) abaixo
 
     # command_type == "LLM"
+    # Qualquer pedido que não caia em um gatilho específico continua no fluxo
+    # geral do LLM. O Nico não deve encerrar em um "comando desconhecido"
+    # quando o usuário pedir algo livre, mesmo que a frase não bata em um
+    # atalho fixo do sistema; só bloqueamos pedidos incompletos.
     if is_incomplete_command(core_text, MIN_COMMAND_WORDS, INCOMPLETE_TRAILING_WORDS):
         return CommandResult("INCOMPLETE", "Poderia terminar o que estava dizendo?")
 
-    memory_result = find_conversation(core_text)
+    skip_memory = any(trigger in normalize_text(core_text) for trigger in NO_MEMORY_TRIGGERS)
+    memory_result = None if skip_memory else find_conversation(core_text)
 
-    if memory_result.status == "hit":
+    if memory_result and memory_result.status == "hit":
         print("Cache Hit - Resposta do BdD")
         return CommandResult("ANSWER", memory_result.answer)
 
-    if memory_result.status == "ambiguous":
+    if memory_result and memory_result.status == "ambiguous":
         print("Cache Ambiguous - pedindo esclarecimento")
         return CommandResult(
             "CLARIFY",
@@ -311,7 +401,16 @@ def handle_command(command_text, conversation_history):
 
     print("Cache Miss")
     answer = _get_llm_answer(core_text, conversation_history)
-    save_conversation(core_text, answer)
+    if answer is None or not answer.strip():
+        # Falha total (nada respondeu) ou resposta vazia - não é uma resposta
+        # de verdade, então não entra no cache de perguntas/respostas.
+        return CommandResult(
+            "ANSWER",
+            "Desculpe, não consegui acessar nem o meu modelo local nem o de nuvem agora. "
+            "Pode tentar de novo em um instante?",
+        )
+    if not skip_memory:
+        save_conversation(core_text, answer)
     return CommandResult("ANSWER", answer)
 
 
@@ -322,6 +421,70 @@ def _extract_youtube_query(normalized_text):
     """
     tokens = [word for word in normalized_text.split() if word not in YOUTUBE_SEARCH_FILLER_WORDS]
     return " ".join(tokens)
+
+
+def _resolve_document_target(command_text):
+    normalized = normalize_text(command_text)
+    if "comandos" in normalized:
+        return "COMANDOS_NICO.txt"
+    if "documentacao" in normalized or "nico" in normalized:
+        return "Nico_Documentacao.txt"
+    return None
+
+
+def _parse_document_update(text, existing=None, followup=False):
+    update = dict(existing or {"target": None, "content": ""})
+    update["target"] = update.get("target") or _resolve_document_target(text)
+
+    content_match = re.search(
+        r"\b(?:com|inclua|incluindo|acrescente|adicionando)\b\s*[:,-]?\s*(.+)$|:(.+)$",
+        text,
+        re.IGNORECASE,
+    )
+    if content_match:
+        update["content"] = next(value for value in content_match.groups() if value).strip()
+    elif followup and not update["target"]:
+        update["target"] = _resolve_document_target(text)
+        update["content"] = ""
+    elif followup and update["target"] and not _resolve_document_target(text):
+        update["content"] = text.strip()
+
+    return update
+
+
+def _continue_document_update(update, was_question=False):
+    if not update.get("target") or not update.get("content"):
+        set_pending_document_update(update)
+        if not update.get("target") and not update.get("content"):
+            prompt = (
+                "Qual arquivo devo atualizar e o que devo incluir? Responda, por exemplo: "
+                "documentação: texto a acrescentar."
+            )
+        elif not update.get("target"):
+            prompt = "Qual arquivo devo atualizar: documentação ou comandos?"
+        else:
+            prompt = "O que devo incluir no documento?"
+        return CommandResult("DOCUMENT_UPDATE_CLARIFY", prompt)
+
+    set_pending_document_update(None)
+    try:
+        path = _append_document_update(update["target"], update["content"])
+    except OSError as error:
+        print("Document update failed:", error)
+        return CommandResult("ANSWER", "Não consegui atualizar o arquivo. Verifique se ele existe e tente novamente.")
+    return CommandResult("ANSWER", _affirm(f"Atualizei o documento em {path}.", was_question))
+
+
+def _append_document_update(target_name, content):
+    allowed_targets = {"Nico_Documentacao.txt", "COMANDOS_NICO.txt"}
+    if target_name not in allowed_targets or not content.strip():
+        raise ValueError("destino ou conteúdo de atualização inválido")
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(project_root, target_name)
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(f"\n\n--- Atualização ({timestamp}) ---\n{content.strip()}\n")
+    return path
 
 
 def _extract_after_trigger(command_text, triggers):
@@ -461,6 +624,31 @@ def _run_research(topic, wanted, excluded):
         set_status("Pensando")
 
 
+def _create_project(description):
+    if not description:
+        return CommandResult(
+            "ANSWER", "O que você quer que eu crie? Descreva o site ou projeto."
+        )
+
+    set_status("Executando ação")
+    try:
+        path = build_project(description)
+        return CommandResult(
+            "ANSWER",
+            f"Criei o projeto em {path}. Dê uma olhada antes de usar - "
+            "o Kimi gera o código, mas eu não executo nada automaticamente.",
+        )
+    except RuntimeError as error:
+        print("Project generation failed:", error)
+        return CommandResult(
+            "ANSWER",
+            "Não consegui gerar o projeto agora - confirme se a chave do Kimi "
+            "está configurada, ou tente de novo em um instante.",
+        )
+    finally:
+        set_status("Pensando")
+
+
 def _get_llm_answer(command_text, conversation_history):
     """Decide entre fatos lembrados, documentos locais, modelo local, busca
     na web + nuvem, e nuvem como reforço.
@@ -519,11 +707,10 @@ def _get_llm_answer(command_text, conversation_history):
             return ask_cloud_fallback(build_context_prompt(command_text, conversation_history))
         except Exception as cloud_error:
             print("Cloud fallback also failed:", cloud_error)
-            set_status("Lendo documentos")
-            try:
-                document_matches = search_documents(command_text)
-            finally:
-                set_status("Pensando")
+            # None sinaliza falha total pro chamador (handle_command) - uma
+            # desculpa não é uma resposta de verdade e não deve ser salva no
+            # cache de perguntas/respostas.
+            return None
 
 
 def resolve_clarification(reply_text, candidates, command_text, conversation_history):

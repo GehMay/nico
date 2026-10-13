@@ -83,7 +83,7 @@ def open_target(spoken_name):
             if command.endswith(":"):
                 os.startfile(command)
             else:
-                subprocess.Popen(command, shell=True)
+                subprocess.Popen([command], shell=False)
             return f"Abrindo {name}."
         except OSError as error:
             return f"Não consegui abrir {name}: {error}"
@@ -106,10 +106,33 @@ def open_target(spoken_name):
 
 
 def search_youtube(query):
-    """Abre a busca do YouTube pro termo pedido (não dá pra abrir direto o
-    primeiro resultado sem a API do YouTube, que precisa de uma chave - ver
-    AGENTS.md). Retorna uma frase descrevendo o que fez.
+    """Busca o termo pedido no YouTube (via yt-dlp, sem precisar de chave de
+    API) e abre direto o primeiro vídeo encontrado. Se a busca falhar por
+    qualquer motivo (sem internet, yt-dlp desatualizado por uma mudança no
+    site, etc.), cai de volta para abrir a página de busca do YouTube, que
+    sempre funciona. Retorna uma frase descrevendo o que fez.
     """
+    try:
+        import yt_dlp
+
+        options = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": True,
+            "socket_timeout": 8,
+        }
+        with yt_dlp.YoutubeDL(options) as downloader:
+            info = downloader.extract_info(f"ytsearch1:{query}", download=False)
+        entries = info.get("entries") or []
+        if entries and entries[0].get("id"):
+            video_id = entries[0]["id"]
+            title = entries[0].get("title") or query
+            webbrowser.open(f"https://www.youtube.com/watch?v={video_id}")
+            return f'Abrindo "{title}" no YouTube.'
+    except Exception as error:
+        print("Busca direta no YouTube via yt-dlp falhou, caindo para a busca padrão:", error)
+
     webbrowser.open(f"https://www.youtube.com/results?search_query={quote(query)}")
     return f'Buscando "{query}" no YouTube.'
 

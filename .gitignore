@@ -3,3 +3,6 @@ nico_memory.db
 tts_cache/
 __pycache__/
 screenshots/
+models/
+pesquisas/
+projetos_gerados/

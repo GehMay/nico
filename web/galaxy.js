@@ -82,6 +82,8 @@ function closeDetail() {
   document.getElementById('detail').style.display = 'none';
 }
 
+document.getElementById('detail-close').addEventListener('click', closeDetail);
+
 function applySearch(term) {
   if (!allNodesData) return;
   const query = term.trim().toLowerCase();

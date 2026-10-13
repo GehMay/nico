@@ -19,13 +19,23 @@ _OPS = {
 }
 
 
+_MAX_OPERAND = 1_000_000_000
+_MAX_EXPONENT = 1000
+
+
 def _safe_eval(node):
     if isinstance(node, ast.Expression):
         return _safe_eval(node.body)
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        if abs(node.value) > _MAX_OPERAND:
+            raise ValueError("número grande demais")
         return node.value
     if isinstance(node, ast.BinOp) and type(node.op) in _OPS:
-        return _OPS[type(node.op)](_safe_eval(node.left), _safe_eval(node.right))
+        left = _safe_eval(node.left)
+        right = _safe_eval(node.right)
+        if isinstance(node.op, ast.Pow) and abs(right) > _MAX_EXPONENT:
+            raise ValueError("expoente grande demais")
+        return _OPS[type(node.op)](left, right)
     if isinstance(node, ast.UnaryOp) and type(node.op) in _OPS:
         return _OPS[type(node.op)](_safe_eval(node.operand))
     raise ValueError("expressão não suportada")

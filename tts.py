@@ -23,9 +23,27 @@ def _ensure_mixer():
         _mixer_ready = True
 
 
+_MAX_CACHE_FILES = 500
+
+
 def _cache_path(text):
     key = hashlib.sha1(f"{NEURAL_VOICE}|{text}".encode("utf-8")).hexdigest()
     return os.path.join(TTS_CACHE_DIR, f"{key}.mp3")
+
+
+def _evict_oldest_cache_files():
+    try:
+        entries = [os.path.join(TTS_CACHE_DIR, name) for name in os.listdir(TTS_CACHE_DIR)]
+    except OSError:
+        return
+    if len(entries) <= _MAX_CACHE_FILES:
+        return
+    entries.sort(key=lambda path: os.path.getmtime(path))
+    for path in entries[: len(entries) - _MAX_CACHE_FILES]:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 async def _synthesize(text, audio_path):
@@ -59,6 +77,7 @@ def _speak_neural(text):
             if os.path.exists(cached_path):
                 os.remove(cached_path)
             raise
+        _evict_oldest_cache_files()
         _play(cached_path)
         return
 

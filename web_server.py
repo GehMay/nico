@@ -11,6 +11,31 @@ from text_utils import tokenize
 from tts import speak
 
 app = Flask(__name__, static_folder="web", static_url_path="/assets")
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
+_ALLOWED_LOOPBACK_HOSTS = {"127.0.0.1", "127.0.0.1:5000", "localhost", "localhost:5000"}
+
+
+def _is_same_origin_request():
+    if request.host.lower() not in _ALLOWED_LOOPBACK_HOSTS:
+        return False
+    origin = request.headers.get("Origin")
+    if origin is None or origin.rstrip("/") != request.host_url.rstrip("/"):
+        return False
+    return request.headers.get("X-Nico-Request") == "1"
+
+
+@app.after_request
+def _add_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' https://cdn.jsdelivr.net https://unpkg.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src https://fonts.gstatic.com; img-src 'self' data: blob:; "
+        "worker-src 'self' blob:; connect-src 'self'"
+    )
+    return response
 
 
 @app.route("/")
@@ -30,6 +55,8 @@ def status():
 
 @app.route("/mic/toggle", methods=["POST"])
 def mic_toggle():
+    if not _is_same_origin_request():
+        return jsonify(error="forbidden request"), 403
     state.set_mic_enabled(not state.is_mic_enabled())
     return jsonify(mic_enabled=state.is_mic_enabled())
 
@@ -72,10 +99,23 @@ def api_memory_graph():
 
 @app.route("/command", methods=["POST"])
 def command():
-    data = request.get_json(force=True, silent=True) or {}
-    text = (data.get("text") or "").strip()
+    if not _is_same_origin_request():
+        return jsonify(error="forbidden request"), 403
+    if not request.is_json:
+        return jsonify(error="application/json required"), 415
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(error="JSON object required"), 400
+
+    text = data.get("text")
+    if not isinstance(text, str):
+        return jsonify(error="text must be a string"), 400
+    text = text.strip()
     if not text:
         return jsonify(error="empty text"), 400
+    if len(text) > 3000:
+        return jsonify(error="command too long"), 413
 
     result = handle_command(text, state.conversation_history)
 
@@ -94,5 +134,5 @@ def command():
     return jsonify(kind=result.kind, answer=result.text)
 
 
-def run_web_server(host="0.0.0.0", port=5000):
+def run_web_server(host="127.0.0.1", port=5000):
     app.run(host=host, port=port, debug=False, use_reloader=False)

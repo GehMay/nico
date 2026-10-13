@@ -11,6 +11,12 @@ const STATUS_COLORS = {
 };
 
 function colorForStatus(message) {
+  if (message.startsWith("Alerta de segurança")) {
+    return getComputedStyle(document.documentElement).getPropertyValue('--c-error');
+  }
+  if (message.startsWith("Norton e Firewall voltaram")) {
+    return getComputedStyle(document.documentElement).getPropertyValue('--c-speaking');
+  }
   if (message.startsWith("Erro")) {
     return getComputedStyle(document.documentElement).getPropertyValue('--c-error');
   }
@@ -28,7 +34,9 @@ function applyStatus(message) {
     ring.style.borderRightColor = color + '55';
   });
 
-  document.getElementById('status-text').innerText = message.toUpperCase();
+  const status = document.getElementById('status-text');
+  status.innerText = message.toUpperCase();
+  status.title = message;
 }
 
 function applyMicButton(micEnabled) {
@@ -38,6 +46,7 @@ function applyMicButton(micEnabled) {
   button.classList.toggle('paused', !micEnabled);
   icon.innerText = micEnabled ? '🎤' : '🔇';
   label.innerText = micEnabled ? 'MICROFONE LIGADO' : 'MICROFONE PAUSADO';
+  button.title = micEnabled ? 'Pausar o microfone' : 'Ativar o microfone';
 }
 
 let lastStatus = null;
@@ -57,11 +66,20 @@ async function refreshStatus() {
 
 async function toggleMic() {
   try {
-    const r = await fetch('/mic/toggle', { method: 'POST' });
+    const r = await fetch('/mic/toggle', {
+      method: 'POST',
+      headers: { 'X-Nico-Request': '1' }
+    });
     const data = await r.json();
     applyMicButton(data.mic_enabled);
   } catch (err) {
     console.error('Failed to toggle mic:', err);
+  }
+}
+
+async function closeNico() {
+  if (window.pywebview && window.pywebview.api) {
+    await window.pywebview.api.close_nico();
   }
 }
 
@@ -73,9 +91,21 @@ async function refreshHistory() {
   lastHistoryLength = data.history.length;
 
   const el = document.getElementById('transcript');
-  el.innerHTML = data.history.map(h =>
-    `<div class="entry"><div class="you">Você: ${h[0]}</div><div class="nico">Nico: ${h[1]}</div></div>`
-  ).join('');
+  el.replaceChildren(...data.history.map(h => {
+    const entry = document.createElement('div');
+    entry.className = 'entry';
+
+    const you = document.createElement('div');
+    you.className = 'you';
+    you.textContent = `Você: ${h[0]}`;
+
+    const nico = document.createElement('div');
+    nico.className = 'nico';
+    nico.textContent = `Nico: ${h[1]}`;
+
+    entry.append(you, nico);
+    return entry;
+  }));
   el.scrollTop = el.scrollHeight;
 }
 
@@ -86,7 +116,10 @@ async function sendCommand() {
   input.value = '';
   await fetch('/command', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Nico-Request': '1'
+    },
     body: JSON.stringify({ text })
   });
   lastHistoryLength = -1;
@@ -96,6 +129,9 @@ async function sendCommand() {
 document.getElementById('cmd').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') sendCommand();
 });
+document.getElementById('send-button').addEventListener('click', sendCommand);
+document.getElementById('mic-toggle').addEventListener('click', toggleMic);
+document.getElementById('close-button').addEventListener('click', closeNico);
 
 applyStatus("Nico está iniciando...");
 setInterval(refreshStatus, 500);

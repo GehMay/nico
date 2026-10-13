@@ -13,6 +13,11 @@ pypdf
 dateparser
 psutil
 Pillow
-pvporcupine
+vosk
 icalendar
 recurring-ical-events
+cryptography
+pywin32
+yt-dlp
+faster-whisper
+numpy

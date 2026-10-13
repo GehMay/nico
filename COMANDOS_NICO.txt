@@ -16,11 +16,16 @@ Mostra a versão do Python 3.11 que será usada.
 py -3.11 -m pip install -r requirements.txt
 Instala ou atualiza as dependências listadas do Nico, incluindo geração/leitura de PDF.
 
-py -3.11 -m py_compile config.py text_utils.py database.py memory.py llm.py cloud_llm.py web_search.py documents.py facts.py reminders.py system_control.py weather.py research.py calculator.py wake_word.py google_calendar.py commands.py tts.py voice.py state.py web_server.py desktop_app.py nico.py
+py -3.11 -m py_compile config.py text_utils.py database.py memory.py llm.py cloud_llm.py web_search.py documents.py facts.py reminders.py system_control.py weather.py research.py calculator.py wake_word.py google_calendar.py commands.py tts.py voice.py state.py web_server.py desktop_app.py nico.py security_monitor.py personality.py crypto_utils.py speaker_id.py speech_to_text.py code_builder.py
 Verifica erros de sintaxe em todos os módulos do projeto. Não inicia o Nico e não testa microfone, Ollama, Google Calendar ou o banco.
 
 py -3.11 nico.py
-Inicia o Nico: abre a janela, começa a escutar pelo microfone e usa o Ollama quando necessário. Para encerrar, feche a janela do Nico.
+Inicia o Nico: a janela aparece quando ele reconhece "Nico" ou duas palmas. O botão "×" da janela só esconde o HUD - não encerra o Nico. Para encerrar de verdade, feche o processo pelo Gerenciador de Tarefas (pythonw.exe).
+
+ATENÇÃO: o Nico já inicia sozinho ao entrar no Windows. Não rode este comando (nem clique no atalho da área de trabalho) se ele já estiver rodando - duas cópias ao mesmo tempo disputam a mesma porta (5000) e o mesmo microfone, e isso falha de forma silenciosa, sem aviso. Para checar se já está rodando:
+
+Get-Process pythonw -ErrorAction SilentlyContinue
+Se mostrar um processo, o Nico já está ativo.
 
 OLLAMA
 ------
@@ -75,6 +80,21 @@ Nico abre a página oficial conhecida no navegador padrão do Windows (Edge, se 
 
 Fale ou escreva: "Modo Pesquisa <tema>, <o que quero>, <o que não quero>".
 Exemplo: "Modo Pesquisa empreendedorismo jovem, exemplos de startups brasileiras e dados recentes, não quero frases motivacionais nem conteúdo sobre grandes empresas". Os três campos são obrigatórios. Se algum faltar, Nico pergunta antes de pesquisar; responda os campos pendentes separados por vírgulas. A pesquisa considera o objetivo e evita o conteúdo excluído. O relatório PDF é salvo em Nico Notes (G:\Meu Drive\Nico Notes, se NOTES_FOLDER estiver configurada), com estrutura e apresentação inspiradas na ABNT e referências numeradas a partir das fontes retornadas. Para cancelar enquanto Nico aguarda os campos, diga ou escreva "cancelar pesquisa".
+
+CRIAÇÃO DE PROJETOS DE CÓDIGO (KIMI)
+-------------------------------------
+
+Fale ou escreva: "Crie um site sobre <tema>" ou "Crie um projeto para <finalidade>".
+Exemplo: "Crie um site sobre receitas veganas". O Kimi (Moonshot AI) gera o código e Nico salva numa pasta nova dentro de projetos_gerados/ (nunca nos arquivos reais do Nico). Nico nunca executa o código gerado automaticamente - ele só avisa onde salvou; abra e revise antes de usar. Precisa de KIMI_API_KEY configurada no .env (ver seção ".env" abaixo); sem isso, Nico avisa que não consegue.
+
+Fale ou escreva: "Sugira uma melhoria para você" ou "Crie uma funcionalidade para você".
+Mesma mecânica acima, mas o pedido é sobre o próprio Nico. O resultado é só um rascunho para revisão - se você gostar da ideia, traga numa conversa normal pedindo para o Claude revisar e aplicar de verdade. O Nico não se auto-modifica.
+
+CADASTRO DE VOZ (RECONHECIMENTO DE LOCUTOR)
+--------------------------------------------
+
+Fale: "Aprenda minha voz" ou "Cadastre minha voz".
+Nico avisa e grava por ~12 segundos contínuos - fale naturalmente durante esse tempo. Depois disso, comandos cuja voz não bater com o perfil cadastrado (ex.: TV ou vídeo tocando perto) são ignorados silenciosamente. Comandos muito curtos (uma palavra só) não têm sinal suficiente para verificar e passam sem checagem. Não repete o cadastro automaticamente - se quiser recadastrar (outra pessoa, ambiente diferente), basta falar o comando de novo, o perfil anterior é substituído.
 
 CODEBASE MEMORY MCP
 -------------------
@@ -133,3 +153,44 @@ LEMBRETES
 - O Nico usa Python 3.11; prefira sempre `py -3.11` para executá-lo ou compilá-lo.
 - `py_compile` verifica sintaxe, mas não substitui os testes reais de voz, banco e Ollama.
 - Nunca coloque credenciais, chaves ou conversas privadas no Git. O .gitignore já contém nico_memory.db e .env.
+- A chave real do .env mora fora da pasta do projeto, em %LOCALAPPDATA%\Nico\.env (não sincroniza com o OneDrive). O .env.example dentro da pasta do projeto é só um modelo com instruções - nunca coloque uma chave real nele.
+
+ATUALIZAÇÃO DE DOCUMENTO / PESQUISA
+----------------------------------
+
+- Peça "atualize a documentação do Nico" ou "edite esse documento". Se faltar o arquivo ou o texto, Nico pergunta antes de gravar.
+- Para indicar o conteúdo diretamente, diga, por exemplo: "atualize a documentação do Nico com: [texto]" ou "comandos: [texto]". O texto é acrescentado ao arquivo escolhido; o conteúdo anterior não é sobrescrito.
+- Os arquivos aceitos são Nico_Documentacao.txt e COMANDOS_NICO.txt. Essa ação não altera o Codebase Memory do Projeto4 nem o banco SQLite.
+- Relatórios do Modo Pesquisa são salvos automaticamente em RESEARCH_FOLDER (Nico Notes no Drive quando NOTES_FOLDER está configurada). A pesquisa não entra no cache de conversas nem na tabela de fatos.
+- Para uma pergunta comum, acrescente "não salve isso na memória" para responder sem consultar ou gravar o cache de conversas. Essa instrução não apaga itens já existentes.
+- "salve a pesquisa no Drive" informa a configuração de destino; a pasta do Drive depende de NOTES_FOLDER no arquivo local .env.
+
+INÍCIO AUTOMÁTICO, WAKE WORD LOCAL E RECONHECIMENTO DE VOZ
+------------------------------------------------------------
+
+- O atalho de Inicialização do Windows ("Nico.lnk") inicia o Nico sem janela de console. Para conferir ou remover: pressione Win+R, digite `shell:startup` e confirme; remova esse atalho para desativar o início automático.
+- Não inicie manualmente (atalho da área de trabalho ou `py -3.11 nico.py`) se o Nico já tiver iniciado automaticamente - duas cópias disputam a mesma porta e o mesmo microfone, e isso falha silenciosamente (ver seção PYTHON/NICO acima).
+- O servidor do painel está limitado a `127.0.0.1`; outros dispositivos e o painel do celular não conseguem acessá-lo.
+- A ativação local por voz ou palmas usa o modelo Vosk instalado em `%LOCALAPPDATA%\Nico\models\vosk-model-small-pt-0.3`; não exige conta, chave ou configuração no `.env`.
+- Nico acorda ao reconhecer "Nico" ou duas palmas próximas; o mini-HUD aparece e se oculta após 10 segundos sem novo comando. O botão do microfone pausa a escuta; o botão `×` só esconde a janela - não encerra o Nico.
+- Se o modelo Vosk estiver ausente ou falhar, Nico permanece pausado e mostra um aviso; não envia áudio ocioso ao Google.
+- O microfone precisa estar permitido nas configurações de privacidade do Windows para aplicativos de desktop.
+- Depois da ativação, o reconhecimento do comando tenta primeiro o Whisper local (faster-whisper, entende nomes em inglês dentro de frases em português); se não estiver disponível, usa o Google Speech Recognition (pt-BR, com uma segunda tentativa em en-US se não entender nada).
+- Há tolerância de ~1,6 segundos de pausa no meio da fala antes de considerar que você terminou de falar (ajustável em config.RECOGNIZER_PAUSE_THRESHOLD_SECONDS).
+- Reconhecimento de locutor (opcional): "aprenda minha voz" cadastra seu perfil; depois disso, áudio que não for da sua voz (ex.: TV tocando perto) é ignorado silenciosamente.
+
+SEGURANÇA DO COMPUTADOR
+-----------------------
+
+- Diga "status de segurança" para consultar os antivírus registrados, o serviço Norton e os perfis do Firewall.
+- Nico verifica o serviço Norton e o Firewall a cada 5 minutos. Se algum ficar desligado ou voltar a funcionar, abre o mini-HUD com um aviso. O aviso não afirma que houve ataque.
+- Diga "abra o Norton" para abrir o aplicativo e iniciar uma verificação ou revisar a quarentena.
+- A detecção e a quarentena de ameaças são responsabilidade do Norton. Nico não apaga downloads nem encerra processos automaticamente.
+- A inspeção durante downloads depende do Auto-Protect do Norton e do Microsoft Defender SmartScreen. Nico não intercepta cada download antes de ele começar e não recebe os alertas de detecção do Norton; mantenha as notificações e a proteção do Norton ativas.
+
+CRIPTOGRAFIA E DADOS PESSOAIS
+------------------------------
+
+- Fatos, conversas, lembretes e o perfil de voz ficam cifrados em repouso no banco (AES/Fernet). A chave é protegida pela DPAPI do Windows - só abre com esta conta, neste computador, sem precisar de senha.
+- O servidor web (HUD/painel) tem cabeçalhos de segurança e proteção contra requisição de outra origem; o transcript nunca executa HTML/JS que viesse de uma resposta.
+- Para mais detalhes (o que motivou cada decisão, testes feitos), ver "Follow-up round 27" no AGENTS.md.
