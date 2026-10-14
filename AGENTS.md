@@ -198,7 +198,7 @@ Drive, and Nico just reads what's already there (not Claude acting as Nico's liv
   (`config.OLLAMA_KEEP_ALIVE`, keeps the model loaded in memory between calls instead of reloading it
   cold each time).
 - **Daily research routine**: created a Claude scheduled cloud routine, "Nico Research - Daily Topics
-  Sweep" (id `ROTINA-PRIVADA`, https://claude.ai/code/routines/ROTINA-PRIVADA),
+  Sweep" (id and URL omitted here - it's a private routine tied to the user's Claude account),
   cron `0 10 * * *` (10:00 UTC = 07:00 America/Sao_Paulo, no DST in Brazil). Each day it researches
   Technology, Politics, Games, Anime, Manga, and Manhwa via web search, and writes ONE new file
   (`YYYY-MM-DD - Nico Research.txt`) into a "Nico Research" folder in the user's Google Drive, via the
@@ -327,8 +327,8 @@ actually schedules something that fires at the right time, instead of only being
   `start "Nico" /min py -3.11 nico.py` - a minimized console window, titled "Nico", in the right
   working directory (needed since `DB_PATH`, `tts_cache/`, etc. are relative paths).
 - A desktop shortcut ("Nico.lnk") was created pointing at that `.bat`. The user's actual Desktop
-  folder is OneDrive-redirected to `C:\Users\usuario\OneDrive\Área de Trabalho` (same parent folder as
-  the project itself), not the default `C:\Users\usuario\Desktop` - confirmed via
+  folder is OneDrive-redirected to `C:\Users\<usuario>\OneDrive\Área de Trabalho` (same parent folder as
+  the project itself), not the default `C:\Users\<usuario>\Desktop` - confirmed via
   `[Environment]::GetFolderPath("Desktop")` before creating the shortcut, rather than assuming.
   **Lesson: never assume the Desktop/Documents/etc. path on this machine - OneDrive folder
   redirection means the real path can differ from the Windows default.**

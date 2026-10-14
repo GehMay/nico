@@ -3,7 +3,7 @@ GUIA DE COMANDOS DO PROJETO NICO
 
 Use estes comandos no PowerShell. O terminal atual normalmente já abre na pasta do projeto. Se não estiver nela, primeiro execute:
 
-Set-Location "C:\Users\usuario\OneDrive\Área de Trabalho\Nico"
+Set-Location "C:\Users\<seu-usuario>\OneDrive\Área de Trabalho\Nico"
 
 Isso muda a pasta atual para o projeto. No PowerShell, use Set-Location; o formato `cd /d` é do Prompt de Comando (cmd), não do PowerShell.
 
@@ -105,7 +105,7 @@ Cria uma variável temporária do PowerShell apontando para o executável do MCP
 & "$env:LOCALAPPDATA\Programs\codebase-memory-mcp\codebase-memory-mcp.exe" cli list_projects --format json
 Lista os projetos indexados pelo MCP.
 
-& "$env:LOCALAPPDATA\Programs\codebase-memory-mcp\codebase-memory-mcp.exe" cli --progress index_repository --repo-path "C:\Users\usuario\OneDrive\Área de Trabalho\Nico"
+& "$env:LOCALAPPDATA\Programs\codebase-memory-mcp\codebase-memory-mcp.exe" cli --progress index_repository --repo-path "C:\Users\<seu-usuario>\OneDrive\Área de Trabalho\Nico"
 Cria ou atualiza o índice separado do projeto Nico. Não inclui o banco nico_memory.db e não altera nem apaga o índice Projeto4.
 
 Não use delete_project para “limpar menções ao Nico” dentro de Projeto4: esse comando apaga o índice inteiro daquele projeto, não itens selecionados.
