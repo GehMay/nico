@@ -1,5 +1,10 @@
 # Nico
 
+> **Projeto pessoal de portfólio - todos os direitos reservados.** Este repositório está público
+> apenas para leitura e avaliação (recrutadores, professores, colegas). **Não são aceitos Pull
+> Requests, forks com intenção de reuso, nem qualquer uso, cópia ou redistribuição do código sem
+> autorização por escrito da autora** - veja [`LICENSE`](LICENSE).
+
 Assistente de voz local, em português, para Windows - um projeto pessoal/acadêmico de portfólio.
 
 Nico escuta por palavra-chave ("Nico") ou duas palmas, entende comandos falados ou digitados,
@@ -30,8 +35,8 @@ Detalhes completos da arquitetura e do histórico de decisões estão em [`AGENT
 ## Status
 
 Projeto pessoal, considerado funcionalmente finalizado. O código está público para fins de
-portfólio e avaliação técnica - não é um projeto open source ativo, e **Pull Requests não serão
-aceitos**. Sinta-se à vontade para explorar o código e abrir uma Issue com perguntas.
+portfólio e avaliação técnica - não é um projeto open source ativo. Sinta-se à vontade para
+explorar o código e abrir uma Issue com perguntas.
 
 ## Executando localmente
 
