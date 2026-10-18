@@ -35,7 +35,7 @@ def find_conversation(user_text):
         return MemoryResult(status="miss")
 
     scored = []
-    for saved_question, saved_answer in fetch_all_conversations():
+    for _conversation_id, saved_question, saved_answer in fetch_all_conversations():
         score = keyword_score(query_tokens, tokenize(saved_question))
         if score > 0:
             scored.append((score, saved_question, saved_answer))

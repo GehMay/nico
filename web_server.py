@@ -5,7 +5,7 @@ from flask import Flask, jsonify, request, send_from_directory
 import state
 from commands import handle_command
 from config import GRAPH_EDGE_THRESHOLD
-from database import fetch_all_conversations
+from database import delete_all_conversations, delete_conversation, fetch_all_conversations
 from memory import keyword_score
 from text_utils import tokenize
 from tts import speak
@@ -69,22 +69,26 @@ def history():
 @app.route("/api/memory")
 def api_memory():
     rows = fetch_all_conversations()
-    return jsonify(memory=[{"question": q, "answer": a} for q, a in rows])
+    return jsonify(memory=[{"id": i, "question": q, "answer": a} for i, q, a in rows])
 
 
 @app.route("/api/memory/graph")
 def api_memory_graph():
     rows = fetch_all_conversations()
-    tokenized = [tokenize(question) for question, _ in rows]
+    tokenized = [tokenize(question) for _id, question, _answer in rows]
 
+    # O id do nó é o id real da linha no banco (não a posição na lista), já
+    # que o front usa esse id para pedir a exclusão de uma memória específica
+    # (DELETE /api/memory/<id>) - um índice posicional mudaria toda vez que
+    # outra memória fosse apagada.
     nodes = [
         {
-            "id": index,
+            "id": conversation_id,
             "label": (question[:42] + "…") if len(question) > 42 else question,
             "question": question,
             "answer": answer,
         }
-        for index, (question, answer) in enumerate(rows)
+        for conversation_id, question, answer in rows
     ]
 
     edges = []
@@ -92,9 +96,29 @@ def api_memory_graph():
         for j in range(i + 1, len(rows)):
             score = keyword_score(tokenized[i], tokenized[j])
             if score >= GRAPH_EDGE_THRESHOLD:
-                edges.append({"from": i, "to": j, "value": round(score, 3)})
+                edges.append({"from": rows[i][0], "to": rows[j][0], "value": round(score, 3)})
 
     return jsonify(nodes=nodes, edges=edges)
+
+
+@app.route("/api/memory/<int:conversation_id>", methods=["DELETE"])
+def api_memory_delete(conversation_id):
+    """Apaga uma memória específica (botão "apagar" da galáxia), pelo id
+    real da linha no banco. Só fatos/lembretes continuam intactos - essa
+    tabela é só o cache de perguntas e respostas."""
+    if not _is_same_origin_request():
+        return jsonify(error="forbidden request"), 403
+    delete_conversation(conversation_id)
+    return jsonify(deleted=conversation_id)
+
+
+@app.route("/api/memory", methods=["DELETE"])
+def api_memory_delete_all():
+    """Apaga toda a memória de conversas de uma vez (botão "apagar tudo")."""
+    if not _is_same_origin_request():
+        return jsonify(error="forbidden request"), 403
+    delete_all_conversations()
+    return jsonify(deleted="all")
 
 
 @app.route("/command", methods=["POST"])

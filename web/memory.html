@@ -35,8 +35,16 @@
     z-index: 5;
   }
   #detail .you { color: var(--accent); margin-bottom: 6px; }
-  #detail .nico { color: var(--c-speaking); }
+  #detail .nico { color: var(--c-speaking); margin-bottom: 10px; }
   #detail .close { float: right; cursor: pointer; color: var(--muted); }
+  #detail-delete, #clear-all {
+    background: transparent;
+    border: 1px solid var(--c-error);
+    color: var(--c-error);
+    padding: 7px 14px;
+    font-size: 0.85em;
+  }
+  #detail-delete:hover, #clear-all:hover { background: var(--c-error); color: #04060c; filter: none; }
 </style>
 </head>
 <body>
@@ -47,12 +55,14 @@
     <div class="panel"><a href="/">&larr; voltar</a></div>
     <div class="panel"><input type="text" id="search" placeholder="Buscar na galáxia..."></div>
     <div class="panel"><span id="count">carregando...</span></div>
+    <div class="panel"><button id="clear-all" title="Apaga todas as memórias de conversa (não afeta fatos nem lembretes)">Apagar tudo</button></div>
   </div>
 
   <div id="detail" class="panel">
     <span class="close" id="detail-close">&times;</span>
     <div class="you" id="detail-q"></div>
     <div class="nico" id="detail-a"></div>
+    <button id="detail-delete">Apagar esta memória</button>
   </div>
 
 <script src="/assets/starfield.js"></script>

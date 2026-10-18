@@ -43,10 +43,32 @@ def save_conversation(user_text, assistant_text):
 
 def fetch_all_conversations():
     connection = open_database()
-    cursor = connection.execute("SELECT user_text, assistant_text FROM conversation")
+    cursor = connection.execute("SELECT id, user_text, assistant_text FROM conversation ORDER BY id")
     rows = cursor.fetchall()
     connection.close()
-    return [(decrypt_text(user_text), decrypt_text(assistant_text)) for user_text, assistant_text in rows]
+    return [
+        (conversation_id, decrypt_text(user_text), decrypt_text(assistant_text))
+        for conversation_id, user_text, assistant_text in rows
+    ]
+
+
+def delete_conversation(conversation_id):
+    """Apaga uma memória (par pergunta/resposta) específica, pelo id mostrado
+    na galáxia de memória. Não afeta fatos nem lembretes - são tabelas
+    separadas."""
+    connection = open_database()
+    connection.execute("DELETE FROM conversation WHERE id = ?", (conversation_id,))
+    connection.commit()
+    connection.close()
+
+
+def delete_all_conversations():
+    """Apaga toda a memória de conversas (usado pelo botão "apagar tudo" da
+    galáxia). Fatos e lembretes não são tocados."""
+    connection = open_database()
+    connection.execute("DELETE FROM conversation")
+    connection.commit()
+    connection.close()
 
 
 def save_fact(fact_text):

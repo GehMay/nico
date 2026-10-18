@@ -7,6 +7,7 @@ function colorForIndex(i) {
 let network = null;
 let allNodesData = null;
 let allEdgesData = null;
+let selectedMemoryId = null;
 
 async function loadGraph() {
   const r = await fetch('/api/memory/graph');
@@ -60,6 +61,9 @@ async function loadGraph() {
     edges: { smooth: false },
   };
 
+  if (network) {
+    network.destroy();
+  }
   network = new vis.Network(container, { nodes: allNodesData, edges: allEdgesData }, options);
 
   network.on('click', (params) => {
@@ -68,21 +72,68 @@ async function loadGraph() {
       return;
     }
     const node = allNodesData.get(params.nodes[0]);
-    showDetail(node.question, node.answer);
+    showDetail(node.id, node.question, node.answer);
   });
 }
 
-function showDetail(question, answer) {
+function showDetail(id, question, answer) {
+  selectedMemoryId = id;
   document.getElementById('detail-q').innerText = 'Você: ' + question;
   document.getElementById('detail-a').innerText = 'Nico: ' + answer;
   document.getElementById('detail').style.display = 'block';
 }
 
 function closeDetail() {
+  selectedMemoryId = null;
   document.getElementById('detail').style.display = 'none';
 }
 
 document.getElementById('detail-close').addEventListener('click', closeDetail);
+
+async function deleteMemory(id) {
+  const r = await fetch('/api/memory/' + id, {
+    method: 'DELETE',
+    headers: { 'X-Nico-Request': '1' },
+  });
+  if (!r.ok) {
+    alert('Não consegui apagar essa memória. Tente de novo.');
+    return;
+  }
+  if (allNodesData) {
+    allNodesData.remove(id);
+  }
+  if (allEdgesData) {
+    allEdgesData.get().forEach(edge => {
+      if (edge.from === id || edge.to === id) {
+        allEdgesData.remove(edge.id);
+      }
+    });
+  }
+  const remaining = allNodesData ? allNodesData.length : 0;
+  const connections = allEdgesData ? allEdgesData.length : 0;
+  document.getElementById('count').innerText = remaining + ' memórias · ' + connections + ' conexões';
+  closeDetail();
+}
+
+document.getElementById('detail-delete').addEventListener('click', () => {
+  if (selectedMemoryId === null) return;
+  if (!confirm('Apagar esta memória? Essa ação não pode ser desfeita.')) return;
+  deleteMemory(selectedMemoryId);
+});
+
+document.getElementById('clear-all').addEventListener('click', async () => {
+  if (!confirm('Apagar TODAS as memórias de conversa? Fatos e lembretes não são afetados. Essa ação não pode ser desfeita.')) return;
+  const r = await fetch('/api/memory', {
+    method: 'DELETE',
+    headers: { 'X-Nico-Request': '1' },
+  });
+  if (!r.ok) {
+    alert('Não consegui apagar a memória. Tente de novo.');
+    return;
+  }
+  closeDetail();
+  loadGraph();
+});
 
 function applySearch(term) {
   if (!allNodesData) return;
