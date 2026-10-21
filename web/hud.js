@@ -83,6 +83,18 @@ async function closeNico() {
   }
 }
 
+async function openMemory() {
+  if (window.pywebview && window.pywebview.api) {
+    // Abre a galáxia no navegador padrão - a janela compacta do HUD não
+    // foi pensada pra mostrar um grafo grande.
+    await window.pywebview.api.open_memory();
+  } else {
+    // Fora do app (ex.: abrindo index.html direto num navegador comum),
+    // não existe window.pywebview - só navega na própria aba.
+    window.open('/memory', '_blank');
+  }
+}
+
 let lastHistoryLength = -1;
 async function refreshHistory() {
   const r = await fetch('/history');
@@ -131,6 +143,7 @@ document.getElementById('cmd').addEventListener('keydown', (e) => {
 });
 document.getElementById('send-button').addEventListener('click', sendCommand);
 document.getElementById('mic-toggle').addEventListener('click', toggleMic);
+document.getElementById('memory-button').addEventListener('click', openMemory);
 document.getElementById('close-button').addEventListener('click', closeNico);
 
 applyStatus("Nico está iniciando...");

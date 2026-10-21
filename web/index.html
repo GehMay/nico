@@ -9,7 +9,7 @@
   body { display:flex; align-items:stretch; padding:0; overflow:hidden; }
   .island {
     width:100%; height:100%; display:grid;
-    grid-template-columns:72px 1fr 38px 30px;
+    grid-template-columns:72px 1fr 38px 38px 30px;
     grid-template-rows:72px 1fr 38px; gap:8px;
     padding:12px; border:1px solid var(--border); border-radius:22px;
     background:linear-gradient(145deg, rgba(18,24,43,.98), rgba(5,6,10,.98));
@@ -52,19 +52,24 @@
     border: 1px solid var(--c-error);
     color: var(--c-error);
   }
+  #memory-button {
+    grid-area:1 / 4 / 2 / 5; width:38px; height:38px; padding:0;
+    align-self:center; font-size:1.1em;
+    background: var(--panel); border: 1px solid var(--border); color: var(--accent);
+  }
   #close-button {
-    grid-area:1 / 4 / 2 / 5; width:30px; height:30px; padding:0;
+    grid-area:1 / 5 / 2 / 6; width:30px; height:30px; padding:0;
     align-self:center; background:transparent; color:var(--muted); font-size:1.2em;
   }
   #close-button:hover { color:var(--c-error); }
   #transcript {
-    grid-area:2 / 1 / 3 / 5; min-height:0; overflow-y:auto;
+    grid-area:2 / 1 / 3 / 6; min-height:0; overflow-y:auto;
     padding:6px 9px; border-radius:8px; font-size:.76em;
   }
   .entry { margin-bottom:4px; opacity:0; animation:fadein .3s ease forwards; }
   .entry .you { color: var(--accent); }
   .entry .nico { color: var(--c-speaking); }
-  .row { grid-area:3 / 1 / 4 / 5; display:flex; gap:8px; min-width:0; }
+  .row { grid-area:3 / 1 / 4 / 6; display:flex; gap:8px; min-width:0; }
   .row input[type=text] { flex:1; min-width:0; padding:8px 10px; font-size:.82em; }
   .row button { padding:7px 10px; font-size:.7em; }
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -88,6 +93,7 @@
       <span id="mic-icon">🎤</span>
       <span id="mic-label" hidden>MICROFONE LIGADO</span>
     </button>
+    <button id="memory-button" title="Abrir a galáxia de memória no navegador">🧠</button>
     <button id="close-button" title="Esconder (o Nico continua ouvindo)">×</button>
     <div id="transcript" class="panel"></div>
     <div class="row">

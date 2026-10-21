@@ -1,13 +1,20 @@
 import socket
 import time
+import webbrowser
 
 import webview
 
 WINDOW_TITLE = "Nico"
-WINDOW_WIDTH = 460
+WINDOW_WIDTH = 500
 WINDOW_HEIGHT = 235
 BACKGROUND_COLOR = "#05060a"
 _window = None
+# Preenchido em open_desktop_window() - usado pelo botão "Memória" do HUD
+# pra abrir a galáxia no navegador padrão, já que a janela compacta do HUD
+# (sem bordas, 460x235, sempre no topo) não foi pensada pra mostrar um
+# grafo grande - não dá pra "maximizar" essa janela, ela é assim de
+# propósito, então a galáxia abre à parte, numa aba normal de navegador.
+_memory_url = "http://127.0.0.1:5000/memory"
 
 
 class _WindowApi:
@@ -20,6 +27,9 @@ class _WindowApi:
         # ("fechei a aba e ele parou de responder à chamada").
         if _window is not None:
             _window.hide()
+
+    def open_memory(self):
+        webbrowser.open(_memory_url)
 
 
 def show_desktop_window():
@@ -44,7 +54,8 @@ def _wait_for_server(host, port, timeout=10):
 
 
 def open_desktop_window(url, host="127.0.0.1", port=5000, hidden=False, on_ready=None):
-    global _window
+    global _window, _memory_url
+    _memory_url = f"http://{host}:{port}/memory"
     _wait_for_server(host, port)
     screen = webview.screens[0]
     x = max(0, (screen.width - WINDOW_WIDTH) // 2)
@@ -56,7 +67,7 @@ def open_desktop_window(url, host="127.0.0.1", port=5000, hidden=False, on_ready
         x=x,
         y=12,
         background_color=BACKGROUND_COLOR,
-        min_size=(420, 210),
+        min_size=(460, 210),
         hidden=hidden,
         frameless=True,
         on_top=True,
