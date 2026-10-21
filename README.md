@@ -18,7 +18,8 @@ memória persistente de conversas, fatos e lembretes. Interface via uma janela H
 - Transcrição de comando via Whisper local (`faster-whisper`), com fallback para Google Speech
   Recognition.
 - Memória com busca por similaridade (SQLite + Jaccard), fatos lembrados sob pedido e lembretes
-  com hora marcada.
+  com hora marcada. A galáxia de memória (`/memory`) deixa ver e apagar memórias individuais ou
+  todas de uma vez.
 - Agenda combinando lembretes próprios e eventos do Google Calendar (feed iCal, somente leitura).
 - Clima, calculadora, controle de volume, abrir apps/sites, busca no YouTube, modos de trabalho.
 - "Modo Pesquisa": busca na web e gera um relatório em PDF com referências.

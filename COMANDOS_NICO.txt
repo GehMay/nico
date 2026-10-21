@@ -72,6 +72,15 @@ Esse banco guarda conversas, fatos e lembretes. Ele é diferente do Codebase Mem
 
 Para visualizar o banco, abra o DB Browser for SQLite pelo menu Iniciar, selecione nico_memory.db e use a aba Browse Data para escolher a tabela conversation. É melhor fechar o Nico antes de abrir ou editar o banco no DB Browser, para evitar bloqueio do arquivo.
 
+GALÁXIA DE MEMÓRIA (VER E APAGAR CONVERSAS)
+--------------------------------------------
+
+Com o Nico aberto, clique no botão 🧠 na janela do HUD (entre o microfone e o "×") para abrir a galáxia de memória no navegador. Sem o HUD aberto, acesse direto pelo endereço:
+
+http://127.0.0.1:5000/memory
+
+Clique num ponto do grafo para ver a pergunta e a resposta completas. O botão "Apagar esta memória" remove só aquele ponto; o botão "Apagar tudo", na barra superior, remove todas as memórias de conversa de uma vez - ambos pedem confirmação antes. Isso não afeta fatos ("lembre que...") nem lembretes com hora marcada, só o cache de perguntas e respostas.
+
 DOCUMENTAÇÃO E PESQUISA
 -----------------------
 

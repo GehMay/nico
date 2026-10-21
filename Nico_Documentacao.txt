@@ -1,8 +1,8 @@
 ===================================================================
 DOCUMENTAÇÃO DO PROJETO NICO
 Assistente de voz local em português (Brasil) para Windows
-Atualizado em: 2026-10-10 (segurança, criptografia, reconhecimento de
-locutor, Whisper local, geração de código via Kimi)
+Atualizado em: 2026-10-21 (repositório público e licença, exclusão de
+memórias na galáxia, botão de acesso à galáxia no HUD)
 ===================================================================
 
 1. VISÃO GERAL
@@ -52,7 +52,11 @@ Ele:
 - Fala em português com edge-tts e mantém pyttsx3 como fallback offline.
 - Mostra um HUD com status e cores: pesquisa âmbar, leitura de documentos
   verde-azulada, fala verde, pausa vermelha quando ocioso e erro vermelho.
-  Fechar o HUD (botão "×") só esconde a janela - não encerra o Nico.
+  Fechar o HUD (botão "×") só esconde a janela - não encerra o Nico. O
+  botão 🧠 abre a galáxia de memória no navegador padrão (a janela do HUD
+  é pequena de propósito e não mostra a galáxia dentro dela).
+- Deixa apagar memórias erradas direto na galáxia (uma de cada vez, ou
+  todas de uma vez), sem precisar pedir pra alguém mexer no banco.
 - Verifica a cada 5 minutos se o serviço Norton e os perfis do Firewall
   estão ativos; alertas de estado aparecem no mini-HUD. Isso não é detecção
   de ataques e não substitui o antivírus.
@@ -303,9 +307,12 @@ Tabela conversation (id, user_text, assistant_text)
   Cache de perguntas/respostas que passaram pelo caminho do LLM (ver
   seção 9). save_conversation() usa placeholders "?" (proteção contra
   SQL injection) e cifra o conteúdo antes de gravar. fetch_all_
-  conversations() lê tudo e decifra, usado pelo cache de memória e pelo
-  grafo da galáxia. Nunca salva uma resposta de falha total (ver seção
-  20, rodada 31) nem uma pergunta incompleta.
+  conversations() lê tudo (incluindo o id real da linha) e decifra,
+  usado pelo cache de memória e pelo grafo da galáxia. Nunca salva uma
+  resposta de falha total (ver seção 20, rodada 31) nem uma pergunta
+  incompleta. delete_conversation(id) apaga uma memória específica;
+  delete_all_conversations() apaga todas de uma vez - ambas usadas pelos
+  botões "Apagar" da galáxia de memória (ver seção 14, rodada 35).
 
 Tabela facts (id, fact_text, created_at)
   Fatos que o usuário pediu explicitamente para o Nico lembrar
@@ -584,8 +591,15 @@ celular/tablet, desde a rodada 24):
                           Origin).
   "/history"             -> as últimas 20 trocas do conversation_history.
   "/api/memory"           -> todas as perguntas/respostas já salvas
-                          (decifradas).
-  "/api/memory/graph"     -> nós e arestas do grafo da galáxia.
+                          (decifradas, com o id real de cada uma).
+  "/api/memory/graph"     -> nós (id = id real no banco) e arestas do
+                          grafo da galáxia.
+  "/api/memory/<id>" (DELETE) -> apaga uma memória específica (botão
+                          "Apagar esta memória" da galáxia). Mesma
+                          proteção same-origin do /mic/toggle.
+  "/api/memory" (DELETE)  -> apaga TODAS as memórias de conversa de uma
+                          vez (botão "Apagar tudo" da galáxia) - fatos e
+                          lembretes não são afetados. Mesma proteção.
   "/command" (POST)       -> manda um comando digitado (do painel) pelo
                           mesmo handle_command() da voz; fala a resposta
                           em voz alta (numa thread separada) e sempre
@@ -600,7 +614,10 @@ HTML/JS que viesse de uma resposta do LLM ou de uma busca na web.
 A galáxia de memória (web/memory.html + web/galaxy.js) usa a biblioteca
 vis-network (JS, via CDN) com um fundo de estrelas animado (tsParticles).
 Cada pergunta salva é um nó; duas perguntas se ligam por uma aresta se a
-similaridade de palavras-chave passar de GRAPH_EDGE_THRESHOLD.
+similaridade de palavras-chave passar de GRAPH_EDGE_THRESHOLD. Clicar num
+nó mostra a pergunta e a resposta, com um botão "Apagar esta memória";
+a barra superior tem um botão "Apagar tudo" - ambos pedem confirmação
+antes de apagar de verdade (ver seção 20, rodada 35).
 
 ------------------------------------------------------------------
 15. desktop_app.py e voice.py - JANELA E LOOP DE VOZ
@@ -608,11 +625,17 @@ similaridade de palavras-chave passar de GRAPH_EDGE_THRESHOLD.
 desktop_app.py
   open_desktop_window() espera o Flask responder e abre o HUD numa
   janela nativa via pywebview (usa o WebView2 do Windows 11) - essa é a
-  janela do programa, não existe mais GUI em Tkinter. O botão "×" chama
-  close_nico(), que apenas ESCONDE a janela (igual ao que já acontece
-  sozinho depois de 10s sem comando) - não encerra o Nico. Hoje não existe
-  um jeito de encerrar o Nico de dentro do app (precisa fechar pelo
-  Gerenciador de Tarefas, ou matar o processo pythonw.exe).
+  janela do programa, não existe mais GUI em Tkinter. A janela é
+  pequena de propósito (500x235, sem bordas, sempre no topo) - não foi
+  pensada pra mostrar algo grande como a galáxia de memória, então não
+  dá (nem faz sentido) "maximizar" ela. O botão "×" chama close_nico(),
+  que apenas ESCONDE a janela (igual ao que já acontece sozinho depois
+  de 10s sem comando) - não encerra o Nico. Hoje não existe um jeito de
+  encerrar o Nico de dentro do app (precisa fechar pelo Gerenciador de
+  Tarefas, ou matar o processo pythonw.exe). O botão 🧠 chama
+  open_memory(), que abre a galáxia de memória (seção 14) no navegador
+  padrão do Windows - não dentro da própria janela do HUD (ver seção 20,
+  rodada 35).
 
 voice.py
   voice_cycle(conversation_history, set_status):
@@ -713,7 +736,7 @@ só como contexto histórico. A arquitetura ATUAL está descrita nas seções
 1 a 17 acima.
 
 ------------------------------------------------------------------
-20. HISTÓRICO RESUMIDO DAS RODADAS 4 a 33
+20. HISTÓRICO RESUMIDO DAS RODADAS 4 a 35
 ------------------------------------------------------------------
 A partir da rodada 4, cada rodada corresponde a uma seção "Follow-up
 round N" no arquivo AGENTS.md (que tem o relato completo, módulo por
@@ -803,6 +826,20 @@ não duplicar tudo:
        decisão deliberada de não permitir "auto-programação" autônoma e
        sem revisão, explicada e confirmada com o usuário antes de
        construir qualquer coisa.
+  34 - Repositório do GitHub tornado público: auditoria de segurança
+       completa (nenhum segredo real vazado, em nenhum commit), três
+       achados pequenos corrigidos e removidos de todo o histórico
+       (nome de usuário do Windows, id de uma rotina privada do Claude,
+       um arquivo de ícone do Windows sem relação com o projeto),
+       README.md e LICENSE criados ("todos os direitos reservados" -
+       não é licença de código aberto, código visível só pra
+       consulta/portfólio).
+  35 - Botão "Apagar" em cada memória da galáxia, e "Apagar tudo" na
+       barra superior - antes só dava pra apagar pedindo pro Claude
+       mexer direto no banco. Corrigido também um bug real: não existia
+       nenhum jeito de chegar na galáxia de memória de dentro do app -
+       o HUD (janela pequena de propósito) nunca teve um link pra ela;
+       agora tem um botão 🧠 que abre a galáxia no navegador.
 
 Para o relato completo de qualquer rodada (o que foi testado, que arquivo
 mudou exatamente, bugs encontrados durante o teste, etc.), consulte

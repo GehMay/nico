@@ -1267,6 +1267,86 @@ source code autonomously ("self-programming").
   this machine yet) - the request-building code mirrors `ask_groq()`'s already-proven shape exactly,
   but an actual generated project's real quality/completeness needs the user's own first real use.
 
+### Follow-up round 34: repositório público - higienização e licença (2026-10-14)
+
+The user's mother suggested putting Nico on her résumé, which meant making the GitHub repository
+public. Before that, a direct security audit of the whole codebase (tracked files, every historical
+commit, not just the current state) and a cleanup pass.
+
+- **Audit result**: no real secret ever leaked. `.env`, `nico_memory.db` were never committed, in
+  any commit, ever (checked with `git log --all`, not just the working tree). No API key was ever
+  hardcoded anywhere (all read from `os.environ`/`.env`). The old, since-removed CallMeBot `notify.py`
+  never hardcoded `TELEGRAM_USER` either, even in its original commits.
+- **Three small real findings, fixed and scrubbed from the entire git history** (not just the current
+  commit - a public repo exposes every past commit too), using `git-filter-repo` plus a force-push to
+  `origin/main`:
+  1. The user's Windows username appeared in example paths in `AGENTS.md` and `COMANDOS_NICO.txt`
+     (`C:\Users\<username>\OneDrive\...`) - replaced with a generic `<usuario>` placeholder.
+  2. A private Claude scheduled-routine ID/URL (from round 3's daily research routine) appeared in
+     `AGENTS.md` - removed, replaced with a note that it's omitted on purpose.
+  3. `desktop.ini` (a Windows folder-icon decoration file, unrelated to the project) was tracked in
+     Git - untracked and added to `.gitignore`.
+- **README.md and LICENSE added** (neither existed before). The user wants the code visible for
+  portfolio/recruiting purposes but **not reusable** - this is not an open-source project. `LICENSE`
+  is a custom "all rights reserved" notice (not an OSI/SPDX license): viewing is fine, copying, using,
+  modifying, or redistributing is not, without the author's written permission. The user also asked
+  about Creative Commons licenses and about preventing `git clone` entirely - both explained
+  directly: CC licenses are meant for creative/content works, not source code (the author's own
+  guidance says so), and even the most restrictive CC option (BY-NC-ND) still permits copying/sharing
+  verbatim, which is weaker than a plain "all rights reserved" notice; and cloning a *public* repo
+  cannot be technically prevented by any GitHub setting - read access and clone access are the same
+  thing in Git. The only way to actually prevent cloning is to keep the repository private, which
+  contradicts "public on the résumé" - explained as a real trade-off, not something to work around.
+- README's top line is a blockquote making the "all rights reserved, no PRs, no reuse" notice
+  impossible to miss, rather than burying it at the bottom.
+- Verified clean after the rewrite: zero occurrences of the username, the routine ID, or `desktop.ini`
+  left in `git log --all -p` across the whole rewritten history; local working copy re-synced to the
+  new `origin/main` via `git reset --hard` (the old commit hashes no longer exist - expected and
+  intentional for a history rewrite, not a bug).
+
+### Follow-up round 35: apagar memórias individuais na galáxia, e um botão pra achar a galáxia (2026-10-18/21)
+
+Two real, connected gaps surfaced from actual use: there was no way to correct a wrong memory short
+of asking Claude to wipe the whole table again, and - separately - there was no way to even *reach*
+the memory galaxy page from inside the app at all.
+
+- **Exclusão de memórias individuais**: `database.py`'s `fetch_all_conversations()` now returns the
+  real row `id` (it only returned `question, answer` before) - needed so the front-end can ask to
+  delete one specific memory instead of a position in a list that shifts every time something else is
+  deleted. New `delete_conversation(id)` and `delete_all_conversations()`. `memory.py`'s
+  `find_conversation()` updated for the new 3-tuple shape.
+- `web_server.py`: `/api/memory` and `/api/memory/graph` now use the real database id as the node id
+  (instead of a positional `enumerate()` index, which would silently point at the wrong memory after
+  any deletion). New `DELETE /api/memory/<id>` (one memory) and `DELETE /api/memory` (all of them),
+  protected by the same same-origin check already used by `/command` and `/mic/toggle` - confirmed a
+  bare `DELETE` request without the right headers gets a 403, and one with them actually deletes.
+  Only the `conversation` table is touched; facts and reminders are untouched by design.
+- `web/memory.html` + `web/galaxy.js`: a "Apagar esta memória" button in the detail panel (shows when
+  a node is clicked) and an "Apagar tudo" button in the top bar, both asking for confirmation first.
+  Deleting updates the graph in place (removes the node and its edges from the `vis.DataSet`) instead
+  of needing a full page reload.
+- **Reset solicitado desta vez**: at the user's request, wiped the `conversation` table again (5 rows)
+  - same precedent as round 31: `facts` and `reminders` left untouched, a timestamped backup saved to
+  `%LOCALAPPDATA%\Nico\backups\` first, `VACUUM`'d after, and Nico restarted (both to pick up the new
+  code - it doesn't hot-reload - and to clear `state.conversation_history`, the in-RAM transcript).
+- **Bug real descoberto durante o pedido**: the user said she couldn't find a way to open "the whole
+  Nico screen" to reach the memory page. Root cause - there never was one. The HUD window
+  (`desktop_app.py`) is a small, frameless, always-on-top 460x235 window by design (round 24) with no
+  navigation chrome and no link anywhere to `/memory` - the galaxy was only ever reachable by typing
+  the URL into a browser by hand, something nothing in the app ever told the user to do. Fixed: new
+  `_WindowApi.open_memory()` (same pattern as the existing `close_nico()`), exposed to the HUD's JS,
+  opens `http://127.0.0.1:5000/memory` in the system's default browser via `webbrowser.open()` -
+  deliberately *not* trying to show the galaxy's force-directed graph inside the tiny HUD window
+  itself, which was never sized or designed for it. A new 🧠 button sits between the mic and the "×"
+  in `web/index.html`; the window grew slightly (460 -> 500px) to fit it. The first emoji tried (🌌,
+  "milky way") rendered as an unrecognizable fallback glyph on this machine's emoji font - caught by
+  actually zooming into a real screenshot rather than assuming it would render, and swapped for 🧠
+  (brain), which rendered correctly.
+- Verified end-to-end against the real running process, not just unit-level: simulated a real mouse
+  click on the new button's exact on-screen coordinates (via `user32.dll`), confirmed a new browser
+  tab opened, and confirmed via a direct screenshot that it was genuinely the memory galaxy page,
+  showing the user's real (new, post-reset) memories, not a blank or error page.
+
 ## Future Goals (explicitly deferred, not started)
 
 - Phone notifications and/or calls - previously implemented via CallMeBot (Telegram), removed in round
